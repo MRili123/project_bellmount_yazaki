@@ -12,7 +12,7 @@ from cable_detector import detect_cable
 from handle_screenshot import save_screenshot
 
 # Initialize Dino-Lite SDK (used only on screenshot)
-pixel_measure = PixelMeasure(r"C:\Program Files\DNX64\DNX64.dll")
+pixel_measure = PixelMeasure()
 
 # Initialize camera
 cap = get_camera()
@@ -100,6 +100,7 @@ def update_frame():
     label.after(10, update_frame)
 
 # ---------------- Start loop ----------------
-update_frame()
-root.mainloop()
-cap.release()
+if __name__ == "__main__":
+    update_frame()
+    root.mainloop()
+    cap.release()
