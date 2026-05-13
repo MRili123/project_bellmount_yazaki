@@ -127,28 +127,38 @@ def show_result_window(frame, p1, p2, dist_mm):
     def update_display():
         """Redraw image with zoom and pan applied"""
         disp_frame = result_data['frame'].copy()
+        h, w = disp_frame.shape[:2]
+
+        # Track crop region for coordinate transformation
+        crop_x1, crop_y1, crop_x2, crop_y2 = 0, 0, w, h
 
         # Apply zoom and pan
-        h, w = disp_frame.shape[:2]
         if result_data['zoom'] > 1:
             new_w = int(w / result_data['zoom'])
             new_h = int(h / result_data['zoom'])
             center_x = w // 2 + result_data['pan_x']
             center_y = h // 2 + result_data['pan_y']
-            x1 = max(center_x - new_w // 2, 0)
-            y1 = max(center_y - new_h // 2, 0)
-            x2 = min(center_x + new_w // 2, w)
-            y2 = min(center_y + new_h // 2, h)
-            disp_frame = disp_frame[y1:y2, x1:x2]
+            crop_x1 = max(center_x - new_w // 2, 0)
+            crop_y1 = max(center_y - new_h // 2, 0)
+            crop_x2 = min(center_x + new_w // 2, w)
+            crop_y2 = min(center_y + new_h // 2, h)
+            disp_frame = disp_frame[crop_y1:crop_y2, crop_x1:crop_x2]
             disp_frame = cv2.resize(disp_frame, (w, h))
 
-        # Draw overlay
-        cv2.circle(disp_frame, result_data['p1'], 8, (0, 255, 0), -1)
-        cv2.circle(disp_frame, result_data['p2'], 8, (0, 255, 0), -1)
-        cv2.line(disp_frame, result_data['p1'], result_data['p2'], (0, 255, 255), 2)
+        # Transform keypoints to zoomed coordinate space
+        p1_zoom = (int((result_data['p1'][0] - crop_x1) * w / (crop_x2 - crop_x1)),
+                   int((result_data['p1'][1] - crop_y1) * h / (crop_y2 - crop_y1)))
+        p2_zoom = (int((result_data['p2'][0] - crop_x1) * w / (crop_x2 - crop_x1)),
+                   int((result_data['p2'][1] - crop_y1) * h / (crop_y2 - crop_y1)))
+
+        # Draw overlay with transformed coordinates
+        cv2.circle(disp_frame, p1_zoom, 8, (0, 255, 0), -1)
+        cv2.circle(disp_frame, p2_zoom, 8, (0, 255, 0), -1)
+        cv2.line(disp_frame, p1_zoom, p2_zoom, (0, 255, 255), 2)
+
+        # Show real distance in mm (constant regardless of zoom)
         label_text = f"{result_data['dist_mm']:.2f} mm" if result_data['dist_mm'] else "SDK unavailable"
-        mid = ((result_data['p1'][0] + result_data['p2'][0]) // 2,
-               (result_data['p1'][1] + result_data['p2'][1]) // 2 - 15)
+        mid = ((p1_zoom[0] + p2_zoom[0]) // 2, (p1_zoom[1] + p2_zoom[1]) // 2 - 15)
         cv2.putText(disp_frame, label_text, mid, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
         # Add zoom indicator
