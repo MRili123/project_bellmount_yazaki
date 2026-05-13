@@ -51,7 +51,7 @@ def load_model_once():
     global _tf_model
     if _tf_model is None and _TF_AVAILABLE:
         try:
-            _tf_model = tf.keras.models.load_model(MODEL_PATH)
+            _tf_model = tf.keras.models.load_model(MODEL_PATH, compile=False)
         except Exception as e:
             print(f"Model load error: {e}")
     return _tf_model
