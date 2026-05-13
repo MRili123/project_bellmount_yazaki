@@ -384,31 +384,43 @@ class MainApp:
             canvas_w = self.canvas.winfo_width()
             canvas_h = self.canvas.winfo_height()
 
-            if canvas_w > 0 and canvas_h > 0:
-                norm_x = event.x / canvas_w
-                norm_y = event.y / canvas_h
-
+            if canvas_w > 1 and canvas_h > 1:
+                # Calculate actual displayed frame dimensions (considering zoom/pan)
                 if self.zoom > 1:
+                    # When zoomed, the displayed portion is a crop
                     new_w = int(w / self.zoom)
                     new_h = int(h / self.zoom)
                     cx = w // 2 + self.pan_x
                     cy = h // 2 + self.pan_y
-                    x1 = max(cx - new_w // 2, 0)
-                    y1 = max(cy - new_h // 2, 0)
-                    x2 = min(cx + new_w // 2, w)
-                    y2 = min(cy + new_h // 2, h)
-                    disp_w = x2 - x1
-                    disp_h = y2 - y1
-                    x = int(x1 + norm_x * disp_w)
-                    y = int(y1 + norm_y * disp_h)
+                    crop_x1 = max(0, cx - new_w // 2)
+                    crop_y1 = max(0, cy - new_h // 2)
+                    crop_x2 = min(w, cx + new_w // 2)
+                    crop_y2 = min(h, cy + new_h // 2)
+                    disp_w = crop_x2 - crop_x1
+                    disp_h = crop_y2 - crop_y1
+
+                    # Scale canvas click to cropped region
+                    x_in_crop = int(event.x * disp_w / canvas_w)
+                    y_in_crop = int(event.y * disp_h / canvas_h)
+
+                    # Map back to full frame
+                    x = crop_x1 + x_in_crop
+                    y = crop_y1 + y_in_crop
                 else:
-                    x = int(norm_x * w)
-                    y = int(norm_y * h)
+                    # No zoom: simple proportional mapping
+                    x = int(event.x * w / canvas_w)
+                    y = int(event.y * h / canvas_h)
+
+                # Clamp to frame bounds
+                x = max(0, min(x, w - 1))
+                y = max(0, min(y, h - 1))
 
                 if self.p1 is None:
                     self.p1 = (x, y)
+                    print(f"P1 set: ({x}, {y})")
                 elif self.p2 is None:
                     self.p2 = (x, y)
+                    print(f"P2 set: ({x}, {y})")
                     self._compute_distance()
         else:
             self.drag_start = (event.x, event.y)
