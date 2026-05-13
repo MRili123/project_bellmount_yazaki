@@ -42,10 +42,9 @@ current_frame = None
 match_score = 0
 camera_status = "Camera not loaded"
 
-# --------- Scan + inference state ---------
+# --------- Inference state ---------
 _tf_model = None
 _result_window = None
-_is_scanning = False
 MODEL_PATH = os.path.join(os.path.dirname(__file__),
     "model_bellmounth_mesure", "model", "CNN_BELMOUNTH_MODEL_V1.h5")
 
@@ -235,39 +234,8 @@ label.bind("<ButtonRelease-1>", inter.mouse_up)
 label.bind("<MouseWheel>", inter.mouse_scroll)
 
 # ---------------- Scan Control Buttons ----------------
-def start_scan():
-    global _is_scanning
-    _is_scanning = True
-    btn_start.config(state=tk.DISABLED, bg="#555555")
-    btn_capture.config(state=tk.NORMAL, bg="#4CAF50")
-    btn_stop.config(state=tk.NORMAL, bg="#FF5722")
-    status_label.config(text="Status: SCANNING", fg="#3DDB7E")
 
-def stop_scan():
-    global _is_scanning
-    _is_scanning = False
-    btn_start.config(state=tk.NORMAL, bg="#FF5722")
-    btn_capture.config(state=tk.DISABLED, bg="#555555")
-    btn_stop.config(state=tk.DISABLED, bg="#555555")
-    status_label.config(text="Status: IDLE", fg="#FFA500")
-
-# Button frame
-btn_frame = tk.Frame(root, bg="#2b2b2b")
-btn_frame.pack(pady=10)
-
-btn_start = tk.Button(
-    btn_frame,
-    text="▶ Start Scan",
-    command=start_scan,
-    bg="#FF5722",
-    fg="white",
-    font=("Arial", 11, "bold"),
-    padx=15,
-    pady=5,
-    width=12
-)
-btn_start.pack(side=tk.LEFT, padx=5)
-
+# Capture button
 def capture_now():
     global current_frame
     if current_frame is None:
@@ -282,42 +250,17 @@ def capture_now():
         print("✗ Capture failed - inference error")
 
 btn_capture = tk.Button(
-    btn_frame,
-    text="📸 Capture",
-    command=capture_now,
-    bg="#4CAF50",
-    fg="white",
-    font=("Arial", 11, "bold"),
-    padx=15,
-    pady=5,
-    width=12,
-    state=tk.DISABLED
-)
-btn_capture.pack(side=tk.LEFT, padx=5)
-
-btn_stop = tk.Button(
-    btn_frame,
-    text="⏹ Stop Scan",
-    command=stop_scan,
-    bg="#555555",
-    fg="white",
-    font=("Arial", 11, "bold"),
-    padx=15,
-    pady=5,
-    width=12,
-    state=tk.DISABLED
-)
-btn_stop.pack(side=tk.LEFT, padx=5)
-
-# Status label
-status_label = tk.Label(
     root,
-    text="Status: IDLE",
-    bg="#2b2b2b",
-    fg="#FFA500",
-    font=("Arial", 10, "bold")
+    text="📸 Capture Measurement",
+    command=capture_now,
+    bg="#FF5722",
+    fg="white",
+    font=("Arial", 12, "bold"),
+    padx=20,
+    pady=8,
+    width=20
 )
-status_label.pack()
+btn_capture.pack(pady=10)
 
 # ---------------- Update Frame Function ----------------
 def update_frame():
