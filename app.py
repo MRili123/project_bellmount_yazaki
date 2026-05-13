@@ -63,7 +63,6 @@ class LoginWindow:
         self.window.geometry("480x560")
         self.window.configure(bg=BG)
         self.window.resizable(False, False)
-        self.window.tk.call('wm', 'iconphoto', self.window._w)
 
         self.config = self._load_config()
         self.result = None
