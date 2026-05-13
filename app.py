@@ -25,13 +25,18 @@ try:
 except ImportError:
     _TF_AVAILABLE = False
 
-# Initialize Dino-Lite SDK (used only on screenshot)
-pixel_measure = PixelMeasure()
-
 # Initialize camera
 cap = get_camera()
 if cap is None:
     raise RuntimeError("No camera detected!")
+
+# Get camera resolution
+ret, test_frame = cap.read()
+camera_width = test_frame.shape[1] if ret else 1920
+camera_height = test_frame.shape[0] if ret else 1440
+
+# Initialize SDK with actual camera width
+pixel_measure = PixelMeasure(camera_width=camera_width)
 
 current_frame = None
 match_score = 0
