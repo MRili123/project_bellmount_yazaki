@@ -1,23 +1,27 @@
-# app.py
+# Bellmounth Mesure - Professional Measurement System
+# Complete rewrite with login, modern UI, auto/manual modes, annotation saving
+
 import cv2
-from pixelmeasure import PixelMeasure
 import tkinter as tk
-from PIL import Image, ImageTk
-from datetime import datetime
-import os
+from tkinter import messagebox
+import json
 import time
 import math
 import sys
+import os
+import uuid
+from datetime import datetime
+from pathlib import Path
 import numpy as np
+from PIL import Image, ImageTk
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "model_bellmounth_mesure"))
 from utils import apply_threshold
 
 from camera_setup import get_camera
-import interaction_setup as inter
-import cable_detector
+from pixelmeasure import PixelMeasure
 from cable_detector import detect_cable
-from handle_screenshot import save_screenshot
+import cable_detector
 
 try:
     import tensorflow as tf
@@ -25,283 +29,548 @@ try:
 except ImportError:
     _TF_AVAILABLE = False
 
-# Initialize camera
-cap = get_camera()
-if cap is None:
-    raise RuntimeError("No camera detected!")
+# ==================== COLORS ====================
+BG = "#0D0F14"
+SURFACE = "#141720"
+CARD = "#1A1E2A"
+BORDER = "#252A38"
+ACCENT = "#4F8EF7"
+GREEN = "#3DDB7E"
+RED = "#F75F5F"
+YELLOW = "#F7C948"
+TEXT = "#E8ECF5"
+MUTED = "#6B7394"
 
-# Get camera resolution
-ret, test_frame = cap.read()
-camera_width = test_frame.shape[1] if ret else 1920
-camera_height = test_frame.shape[0] if ret else 1440
+# ==================== CONFIG ====================
+CONFIG_FILE = Path(__file__).parent / "config.json"
+DATASET_DIR = Path(__file__).parent / "model_bellmounth_mesure" / "dataset"
+ORIG_DIR = DATASET_DIR / "original"
+THRESH_DIR = DATASET_DIR / "thresholded"
+ANNOTATIONS_FILE = DATASET_DIR / "annotations.json"
+MODEL_PATH = Path(__file__).parent / "model_bellmounth_mesure" / "model" / "CNN_BELMOUNTH_MODEL_V1.h5"
 
-# Initialize SDK with actual camera width
-pixel_measure = PixelMeasure(camera_width=camera_width)
+# Create directories
+for d in [ORIG_DIR, THRESH_DIR]:
+    d.mkdir(parents=True, exist_ok=True)
+if not ANNOTATIONS_FILE.exists():
+    ANNOTATIONS_FILE.write_text("[]")
 
-current_frame = None
-match_score = 0
-camera_status = "Camera not loaded"
+# ==================== LOGIN WINDOW ====================
+class LoginWindow:
+    def __init__(self):
+        self.window = tk.Tk()
+        self.window.title("Bellmounth Mesure - Login")
+        self.window.geometry("400x300")
+        self.window.configure(bg=BG)
+        self.window.resizable(False, False)
 
-# --------- Inference state ---------
-_tf_model = None
-_result_window = None
-MODEL_PATH = os.path.join(os.path.dirname(__file__),
-    "model_bellmounth_mesure", "model", "CNN_BELMOUNTH_MODEL_V1.h5")
+        # Load config
+        self.config = self._load_config()
+        self.result = None
 
-def load_model_once():
-    global _tf_model
-    if _tf_model is None and _TF_AVAILABLE:
+        self._build_ui()
+        self.window.transient()
+        self.window.grab_set()
+
+    def _load_config(self):
+        if CONFIG_FILE.exists():
+            return json.loads(CONFIG_FILE.read_text())
+        return {"machine_name": "LAB-01", "password": "bellmounth"}
+
+    def _build_ui(self):
+        # Title
+        title = tk.Label(self.window, text="◈ BELLMOUNTH MESURE",
+                        bg=BG, fg=ACCENT, font=("Arial", 18, "bold"))
+        title.pack(pady=30)
+
+        # Card frame
+        card = tk.Frame(self.window, bg=CARD, relief=tk.FLAT, bd=0)
+        card.pack(padx=20, pady=10, fill=tk.BOTH, expand=True)
+
+        # Machine name
+        tk.Label(card, text="Machine Name:", bg=CARD, fg=TEXT,
+                font=("Arial", 10)).pack(anchor=tk.W, padx=15, pady=(15, 5))
+        self.machine_entry = tk.Entry(card, font=("Arial", 11),
+                                      width=25, bg=SURFACE, fg=TEXT,
+                                      insertbackground=TEXT, bd=0)
+        self.machine_entry.insert(0, self.config.get("machine_name", "LAB-01"))
+        self.machine_entry.pack(padx=15, pady=(0, 10), fill=tk.X)
+
+        # Password
+        tk.Label(card, text="Password:", bg=CARD, fg=TEXT,
+                font=("Arial", 10)).pack(anchor=tk.W, padx=15, pady=(10, 5))
+        self.password_entry = tk.Entry(card, font=("Arial", 11),
+                                       width=25, bg=SURFACE, fg=TEXT,
+                                       insertbackground=TEXT, show="•", bd=0)
+        self.password_entry.pack(padx=15, pady=(0, 15), fill=tk.X)
+
+        # Error label
+        self.error_label = tk.Label(card, text="", bg=CARD, fg=RED,
+                                   font=("Arial", 9))
+        self.error_label.pack()
+
+        # Login button
+        btn = tk.Button(card, text="LOGIN", command=self._login,
+                       bg=ACCENT, fg="white", font=("Arial", 11, "bold"),
+                       relief=tk.FLAT, bd=0, pady=8)
+        btn.pack(pady=15, fill=tk.X, padx=15)
+
+        self.password_entry.bind("<Return>", lambda e: self._login())
+
+    def _login(self):
+        machine = self.machine_entry.get().strip()
+        password = self.password_entry.get()
+
+        if password == self.config.get("password", "bellmounth"):
+            self.result = machine
+            self.window.destroy()
+        else:
+            self.error_label.config(text="❌ Incorrect password")
+            self.password_entry.delete(0, tk.END)
+
+    def show(self):
+        self.window.mainloop()
+        return self.result
+
+# ==================== MAIN APP ====================
+class MainApp:
+    def __init__(self, machine_name):
+        self.root = tk.Tk()
+        self.root.title(f"Bellmounth Mesure - {machine_name}")
+        self.root.geometry("1400x900")
+        self.root.configure(bg=BG)
+        self.machine_name = machine_name
+
+        # Initialize SDK
+        self._init_sdk()
+
+        if not self.camera_ok:
+            self._show_no_camera()
+            return
+
+        # State
+        self.current_frame = None
+        self.mode = "AUTO"  # AUTO or MANUAL
+        self.p1 = None
+        self.p2 = None
+        self.dist_mm = None
+        self.zoom = 1.0
+        self.pan_x = 0
+        self.pan_y = 0
+        self.drag_start = None
+        self.annotation_count = self._count_annotations()
+
+        # TF model
+        self._tf_model = None
+
+        self._build_ui()
+        self._start_loop()
+
+    def _init_sdk(self):
+        """Initialize Dino-Lite camera and SDK"""
+        self.camera_ok = False
+        self.cap = None
+        self.dnx = None
+        self.pixel_measure = None
+
         try:
-            _tf_model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+            self.cap = get_camera()
+            if self.cap is None:
+                print("Camera not found")
+                return
+
+            ret, frame = self.cap.read()
+            if not ret:
+                return
+
+            self.camera_width = frame.shape[1]
+            self.camera_height = frame.shape[0]
+            self.pixel_measure = PixelMeasure(camera_width=self.camera_width)
+            self.camera_ok = True
         except Exception as e:
-            print(f"Model load error: {e}")
-    return _tf_model
+            print(f"SDK init error: {e}")
 
-def run_inference(frame):
-    model = load_model_once()
-    if model is None:
-        return None
+    def _show_no_camera(self):
+        """Show error screen when no Dino-Lite detected"""
+        frame = tk.Frame(self.root, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True)
 
-    h, w = frame.shape[:2]
+        tk.Label(frame, text="⚠️", font=("Arial", 80), fg=RED, bg=BG).pack(pady=30)
+        tk.Label(frame, text="No Dino-Lite Camera Detected", font=("Arial", 18),
+                fg=TEXT, bg=BG).pack(pady=10)
+        tk.Label(frame, text="Please connect a Dino-Lite microscope and restart.",
+                font=("Arial", 12), fg=MUTED, bg=BG).pack(pady=10)
 
-    try:
-        # Preprocess: threshold -> resize -> normalize -> add channel dim
+        def retry():
+            self.root.destroy()
+            LoginWindow().show()
+
+        tk.Button(frame, text="Retry", command=retry, bg=ACCENT, fg="white",
+                 font=("Arial", 11, "bold"), padx=20, pady=10).pack(pady=20)
+
+    def _build_ui(self):
+        """Build main UI layout"""
+        # Top bar
+        top = tk.Frame(self.root, bg=SURFACE, height=50)
+        top.pack(fill=tk.X, side=tk.TOP)
+        top.pack_propagate(False)
+
+        tk.Label(top, text="◈ BELLMOUNTH MESURE", bg=SURFACE, fg=ACCENT,
+                font=("Arial", 14, "bold")).pack(side=tk.LEFT, padx=20, pady=12)
+        tk.Label(top, text=f"Machine: {self.machine_name}", bg=SURFACE, fg=TEXT,
+                font=("Arial", 10)).pack(side=tk.LEFT, padx=10, pady=12)
+
+        tk.Button(top, text="⏻ QUIT", command=self.root.destroy,
+                 bg=RED, fg="white", font=("Arial", 9, "bold"),
+                 relief=tk.FLAT, bd=0, padx=15, pady=5).pack(side=tk.RIGHT, padx=20, pady=12)
+
+        # Main content
+        content = tk.Frame(self.root, bg=BG)
+        content.pack(fill=tk.BOTH, expand=True)
+
+        # Left: Camera
+        self.canvas = tk.Canvas(content, bg="black", width=900, height=600)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.canvas.bind("<MouseWheel>", self._on_scroll)
+        self.canvas.bind("<Button-1>", self._on_press)
+        self.canvas.bind("<B1-Motion>", self._on_move)
+        self.canvas.bind("<ButtonRelease-1>", self._on_release)
+
+        # Right: Controls
+        right = tk.Frame(content, bg=SURFACE, width=350)
+        right.pack(side=tk.RIGHT, fill=tk.BOTH, padx=10, pady=10)
+        right.pack_propagate(False)
+
+        self._build_right_panel(right)
+
+        # Bottom: Status bar
+        bottom = tk.Frame(self.root, bg=SURFACE, height=40)
+        bottom.pack(fill=tk.X, side=tk.BOTTOM)
+        bottom.pack_propagate(False)
+
+        self.zoom_lbl = tk.Label(bottom, text="Zoom: --x", bg=SURFACE, fg=TEXT, font=("Arial", 9))
+        self.zoom_lbl.pack(side=tk.LEFT, padx=20, pady=10)
+
+        self.mpp_lbl = tk.Label(bottom, text="-- mm/px", bg=SURFACE, fg=TEXT, font=("Arial", 9))
+        self.mpp_lbl.pack(side=tk.LEFT, padx=20, pady=10)
+
+        self.cable_lbl = tk.Label(bottom, text="●Cable: --", bg=SURFACE, fg=MUTED, font=("Arial", 9))
+        self.cable_lbl.pack(side=tk.LEFT, padx=20, pady=10)
+
+    def _build_right_panel(self, parent):
+        """Build right control panel"""
+        # Mode selector
+        mode_frm = tk.LabelFrame(parent, text="MODE", bg=CARD, fg=TEXT,
+                                font=("Arial", 9, "bold"), padx=10, pady=10)
+        mode_frm.pack(fill=tk.X, padx=10, pady=10)
+
+        btn_frame = tk.Frame(mode_frm, bg=CARD)
+        btn_frame.pack(fill=tk.X)
+
+        tk.Button(btn_frame, text="AUTO CNN", command=lambda: self._set_mode("AUTO"),
+                 bg=ACCENT, fg="white", font=("Arial", 9, "bold"),
+                 relief=tk.FLAT, bd=0, padx=15, pady=6,
+                 width=12).pack(side=tk.LEFT, padx=3)
+        tk.Button(btn_frame, text="MANUAL", command=lambda: self._set_mode("MANUAL"),
+                 bg=MUTED, fg="white", font=("Arial", 9, "bold"),
+                 relief=tk.FLAT, bd=0, padx=15, pady=6,
+                 width=12).pack(side=tk.LEFT, padx=3)
+
+        self.mode_btns = {"AUTO": btn_frame.winfo_children()[0],
+                         "MANUAL": btn_frame.winfo_children()[1]}
+
+        # Measurement display
+        meas_frm = tk.LabelFrame(parent, text="MEASUREMENT", bg=CARD, fg=TEXT,
+                               font=("Arial", 9, "bold"), padx=10, pady=10)
+        meas_frm.pack(fill=tk.X, padx=10, pady=10)
+
+        self.dist_lbl = tk.Label(meas_frm, text="-- mm", bg=CARD, fg=GREEN,
+                                font=("Arial", 32, "bold"))
+        self.dist_lbl.pack()
+
+        coords_frm = tk.Frame(meas_frm, bg=CARD)
+        coords_frm.pack(fill=tk.X, pady=5)
+        self.p1_lbl = tk.Label(coords_frm, text="P1: --", bg=CARD, fg=TEXT, font=("Arial", 8))
+        self.p1_lbl.pack(side=tk.LEFT, padx=5)
+        self.p2_lbl = tk.Label(coords_frm, text="P2: --", bg=CARD, fg=TEXT, font=("Arial", 8))
+        self.p2_lbl.pack(side=tk.LEFT, padx=5)
+
+        # Capture button
+        self.capture_btn = tk.Button(parent, text="📸 CAPTURE",
+                                    command=self._on_capture,
+                                    bg=ACCENT, fg="white", font=("Arial", 11, "bold"),
+                                    relief=tk.FLAT, bd=0, padx=20, pady=10)
+        self.capture_btn.pack(fill=tk.X, padx=10, pady=10)
+
+        # Save annotation
+        save_frm = tk.LabelFrame(parent, text="SAVE", bg=CARD, fg=TEXT,
+                               font=("Arial", 9, "bold"), padx=10, pady=10)
+        save_frm.pack(fill=tk.X, padx=10, pady=10)
+
+        self.save_btn = tk.Button(save_frm, text="💾 Save Annotation",
+                                 command=self._save_annotation,
+                                 bg=YELLOW, fg="black", font=("Arial", 9, "bold"),
+                                 relief=tk.FLAT, bd=0, padx=15, pady=8, state=tk.DISABLED)
+        self.save_btn.pack(fill=tk.X)
+
+        self.dataset_lbl = tk.Label(save_frm, text=f"Dataset: {self.annotation_count} items",
+                                   bg=CARD, fg=TEXT, font=("Arial", 8))
+        self.dataset_lbl.pack(pady=5)
+
+        # LED Control
+        led_frm = tk.LabelFrame(parent, text="LED CONTROL", bg=CARD, fg=TEXT,
+                              font=("Arial", 9, "bold"), padx=10, pady=10)
+        led_frm.pack(fill=tk.X, padx=10, pady=10)
+
+        btn_frm = tk.Frame(led_frm, bg=CARD)
+        btn_frm.pack(fill=tk.X)
+        tk.Button(btn_frm, text="ON", command=self._led_on,
+                 bg=GREEN, fg="black", font=("Arial", 9, "bold"),
+                 relief=tk.FLAT, bd=0, padx=15, pady=6, width=8).pack(side=tk.LEFT, padx=3)
+        tk.Button(btn_frm, text="OFF", command=self._led_off,
+                 bg=RED, fg="white", font=("Arial", 9, "bold"),
+                 relief=tk.FLAT, bd=0, padx=15, pady=6, width=8).pack(side=tk.LEFT, padx=3)
+
+        tk.Label(led_frm, text="Brightness:", bg=CARD, fg=TEXT, font=("Arial", 8)).pack(anchor=tk.W, pady=(10, 5))
+        self.led_slider = tk.Scale(led_frm, from_=1, to=6, orient=tk.HORIZONTAL,
+                                  bg=SURFACE, fg=TEXT, highlightthickness=0,
+                                  troughcolor=CARD, command=self._set_brightness)
+        self.led_slider.set(3)
+        self.led_slider.pack(fill=tk.X)
+
+    def _set_mode(self, mode):
+        self.mode = mode
+        for m, btn in self.mode_btns.items():
+            btn.config(bg=ACCENT if m == mode else MUTED)
+
+        self.p1 = None
+        self.p2 = None
+        self.dist_mm = None
+        self._update_display()
+
+    def _on_scroll(self, event):
+        if event.delta > 0:
+            self.zoom *= 1.1
+        else:
+            self.zoom /= 1.1
+        self.zoom = max(1, min(self.zoom, 10))
+
+    def _on_press(self, event):
+        if self.mode == "MANUAL" and self.current_frame is not None:
+            h, w = self.current_frame.shape[:2]
+            x = int(event.x * w / self.canvas.winfo_width())
+            y = int(event.y * h / self.canvas.winfo_height())
+
+            if self.p1 is None:
+                self.p1 = (x, y)
+            elif self.p2 is None:
+                self.p2 = (x, y)
+                self._compute_distance()
+        else:
+            self.drag_start = (event.x, event.y)
+
+    def _on_move(self, event):
+        if self.drag_start and self.zoom > 1:
+            dx = event.x - self.drag_start[0]
+            dy = event.y - self.drag_start[1]
+            self.pan_x -= int(dx / self.zoom)
+            self.pan_y -= int(dy / self.zoom)
+            self.drag_start = (event.x, event.y)
+
+    def _on_release(self, event):
+        self.drag_start = None
+
+    def _on_capture(self):
+        if self.current_frame is None:
+            return
+
+        if self.mode == "AUTO":
+            result = self._run_inference(self.current_frame)
+            if result:
+                self.p1, self.p2, self.dist_mm = result
+        else:
+            self.p1 = None
+            self.p2 = None
+            self.dist_mm = None
+
+    def _run_inference(self, frame):
+        if not _TF_AVAILABLE:
+            return None
+
+        if self._tf_model is None:
+            try:
+                self._tf_model = tf.keras.models.load_model(str(MODEL_PATH), compile=False)
+            except:
+                return None
+
+        h, w = frame.shape[:2]
         thresh = apply_threshold(frame)
         resized = cv2.resize(thresh, (640, 480))
         normalized = resized.astype(np.float32) / 255.0
-        inp = normalized[..., np.newaxis][np.newaxis, ...]  # (1, 480, 640, 1)
+        inp = normalized[..., np.newaxis][np.newaxis, ...]
 
-        pred = model.predict(inp, verbose=0)[0]
-
-        # Denormalize to pixel coords
+        pred = self._tf_model.predict(inp, verbose=0)[0]
         p1 = (int(pred[0] * w), int(pred[1] * h))
         p2 = (int(pred[2] * w), int(pred[3] * h))
         pixel_dist = math.dist(p1, p2)
 
-        # Get real distance from SDK
-        pixel_measure.update()
-        _, mm_pp = pixel_measure.get_values()
+        self.pixel_measure.update()
+        _, mm_pp = self.pixel_measure.get_values()
         dist_mm = pixel_dist * mm_pp if mm_pp else None
 
         return p1, p2, dist_mm
-    except Exception as e:
-        print(f"Inference error: {e}")
-        return None
 
-def show_result_window(frame, p1, p2, dist_mm):
-    global _result_window
+    def _compute_distance(self):
+        if self.p1 and self.p2:
+            pixel_dist = math.dist(self.p1, self.p2)
+            self.pixel_measure.update()
+            _, mm_pp = self.pixel_measure.get_values()
+            self.dist_mm = pixel_dist * mm_pp if mm_pp else None
 
-    # Close previous window if exists
-    try:
-        if _result_window and _result_window.winfo_exists():
-            _result_window.destroy()
-    except:
-        pass
+    def _save_annotation(self):
+        if not (self.p1 and self.p2 and self.current_frame is not None):
+            return
 
-    # Create new window
-    _result_window = tk.Toplevel(root)
-    _result_window.title("Cable Measurement Result - Scroll to zoom, Click & drag to pan")
-    _result_window.geometry("900x700")
-    _result_window.configure(bg="#2b2b2b")
+        fname = f"capture_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]}.png"
+        orig_path = ORIG_DIR / fname
+        thresh_path = THRESH_DIR / fname
 
-    # Store result data for interaction
-    original_frame = frame.copy()
-    result_data = {
-        'frame': original_frame,
-        'p1': p1,
-        'p2': p2,
-        'dist_mm': dist_mm,
-        'zoom': 1.0,
-        'pan_x': 0,
-        'pan_y': 0,
-        'drag_start': None,
-        'h': original_frame.shape[0],
-        'w': original_frame.shape[1]
-    }
+        cv2.imwrite(str(orig_path), self.current_frame)
+        cv2.imwrite(str(thresh_path), apply_threshold(self.current_frame))
 
-    # Create canvas for image display
-    canvas = tk.Canvas(_result_window, bg="black", cursor="cross")
-    canvas.pack(fill=tk.BOTH, expand=True)
+        entry = {
+            "id": str(uuid.uuid4()),
+            "filename": fname,
+            "original_path": str(orig_path),
+            "thresholded_path": str(thresh_path),
+            "width": self.current_frame.shape[1],
+            "height": self.current_frame.shape[0],
+            "points": [
+                {"label": "point_1", "x": self.p1[0], "y": self.p1[1]},
+                {"label": "point_2", "x": self.p2[0], "y": self.p2[1]}
+            ],
+            "pixel_distance": math.dist(self.p1, self.p2),
+            "timestamp": datetime.now().isoformat()
+        }
 
-    def update_display():
-        """Redraw image with zoom and pan applied"""
-        disp_frame = result_data['frame'].copy()
-        h, w = disp_frame.shape[:2]
+        data = json.loads(ANNOTATIONS_FILE.read_text() or "[]")
+        data = [d for d in data if d["filename"] != fname]
+        data.append(entry)
 
-        # Track crop region for coordinate transformation
-        crop_x1, crop_y1, crop_x2, crop_y2 = 0, 0, w, h
+        tmp = ANNOTATIONS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        tmp.replace(ANNOTATIONS_FILE)
 
-        # Apply zoom and pan
-        if result_data['zoom'] > 1:
-            new_w = int(w / result_data['zoom'])
-            new_h = int(h / result_data['zoom'])
-            center_x = w // 2 + result_data['pan_x']
-            center_y = h // 2 + result_data['pan_y']
-            crop_x1 = max(center_x - new_w // 2, 0)
-            crop_y1 = max(center_y - new_h // 2, 0)
-            crop_x2 = min(center_x + new_w // 2, w)
-            crop_y2 = min(center_y + new_h // 2, h)
-            disp_frame = disp_frame[crop_y1:crop_y2, crop_x1:crop_x2]
-            disp_frame = cv2.resize(disp_frame, (w, h))
+        self.annotation_count += 1
+        self.dataset_lbl.config(text=f"Dataset: {self.annotation_count} items")
 
-        # Transform keypoints to zoomed coordinate space
-        p1_zoom = (int((result_data['p1'][0] - crop_x1) * w / (crop_x2 - crop_x1)),
-                   int((result_data['p1'][1] - crop_y1) * h / (crop_y2 - crop_y1)))
-        p2_zoom = (int((result_data['p2'][0] - crop_x1) * w / (crop_x2 - crop_x1)),
-                   int((result_data['p2'][1] - crop_y1) * h / (crop_y2 - crop_y1)))
+    def _led_on(self):
+        try:
+            self.pixel_measure.dnx.SetLEDState(0, 1)
+        except:
+            pass
 
-        # Draw overlay with transformed coordinates
-        cv2.circle(disp_frame, p1_zoom, 8, (0, 255, 0), -1)
-        cv2.circle(disp_frame, p2_zoom, 8, (0, 255, 0), -1)
-        cv2.line(disp_frame, p1_zoom, p2_zoom, (0, 255, 255), 2)
+    def _led_off(self):
+        try:
+            self.pixel_measure.dnx.SetLEDState(0, 0)
+        except:
+            pass
 
-        # Show real distance in mm (constant regardless of zoom)
-        label_text = f"{result_data['dist_mm']:.2f} mm" if result_data['dist_mm'] else "SDK unavailable"
-        mid = ((p1_zoom[0] + p2_zoom[0]) // 2, (p1_zoom[1] + p2_zoom[1]) // 2 - 15)
-        cv2.putText(disp_frame, label_text, mid, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+    def _set_brightness(self, val):
+        try:
+            self.pixel_measure.dnx.SetFLCLevel(0, int(val))
+        except:
+            pass
 
-        # Add zoom indicator
-        zoom_text = f"Zoom: {result_data['zoom']:.1f}x" if result_data['zoom'] > 1 else ""
-        if zoom_text:
-            cv2.putText(disp_frame, zoom_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+    def _count_annotations(self):
+        if ANNOTATIONS_FILE.exists():
+            return len(json.loads(ANNOTATIONS_FILE.read_text() or "[]"))
+        return 0
 
-        # Convert to Tkinter
-        frame_rgb = cv2.cvtColor(disp_frame, cv2.COLOR_BGR2RGB)
-        img = Image.fromarray(frame_rgb)
-        imgtk = ImageTk.PhotoImage(image=img)
+    def _update_display(self):
+        if self.current_frame is None:
+            return
 
-        canvas.create_image(0, 0, anchor='nw', image=imgtk)
-        canvas.image = imgtk
+        disp = self.current_frame.copy()
+        h, w = disp.shape[:2]
 
-    def on_scroll(event):
-        """Handle mouse wheel zoom"""
-        if event.delta > 0:
-            result_data['zoom'] *= 1.1
+        # Apply zoom/pan
+        if self.zoom > 1:
+            new_w = int(w / self.zoom)
+            new_h = int(h / self.zoom)
+            cx = w // 2 + self.pan_x
+            cy = h // 2 + self.pan_y
+            x1 = max(cx - new_w // 2, 0)
+            y1 = max(cy - new_h // 2, 0)
+            x2 = min(cx + new_w // 2, w)
+            y2 = min(cy + new_h // 2, h)
+            disp = disp[y1:y2, x1:x2]
+            disp = cv2.resize(disp, (w, h))
+
+        # Draw cable detection
+        if cable_detector.stable_status == "Cable IN":
+            cv2.putText(disp, cable_detector.stable_status, (10, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         else:
-            result_data['zoom'] /= 1.1
-        result_data['zoom'] = max(1, min(result_data['zoom'], 10))
-        update_display()
+            cv2.putText(disp, cable_detector.stable_status, (10, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-    def on_press(event):
-        """Handle mouse press for pan"""
-        result_data['drag_start'] = (event.x, event.y)
+        # Draw points
+        if self.p1:
+            cv2.circle(disp, self.p1, 8, (0, 255, 0), -1)
+        if self.p2:
+            cv2.circle(disp, self.p2, 8, (0, 255, 0), -1)
+        if self.p1 and self.p2:
+            cv2.line(disp, self.p1, self.p2, (0, 255, 255), 2)
 
-    def on_move(event):
-        """Handle mouse move for pan"""
-        if result_data['drag_start'] is not None and result_data['zoom'] > 1:
-            dx = event.x - result_data['drag_start'][0]
-            dy = event.y - result_data['drag_start'][1]
-            result_data['pan_x'] -= int(dx / result_data['zoom'])
-            result_data['pan_y'] -= int(dy / result_data['zoom'])
-            result_data['drag_start'] = (event.x, event.y)
-            update_display()
+        # Convert & display
+        rgb = cv2.cvtColor(disp, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(rgb)
+        imgtk = ImageTk.PhotoImage(img)
+        self.canvas.create_image(0, 0, anchor='nw', image=imgtk)
+        self.canvas.image = imgtk
 
-    def on_release(event):
-        """Handle mouse release"""
-        result_data['drag_start'] = None
+        # Update labels
+        if self.p1:
+            self.p1_lbl.config(text=f"P1: {self.p1}")
+        if self.p2:
+            self.p2_lbl.config(text=f"P2: {self.p2}")
+        if self.dist_mm is not None:
+            self.dist_lbl.config(text=f"{self.dist_mm:.2f} mm")
+            self.save_btn.config(state=tk.NORMAL)
+        else:
+            self.dist_lbl.config(text="-- mm")
+            self.save_btn.config(state=tk.DISABLED)
 
-    # Bind events
-    canvas.bind("<MouseWheel>", on_scroll)
-    canvas.bind("<Button-1>", on_press)
-    canvas.bind("<B1-Motion>", on_move)
-    canvas.bind("<ButtonRelease-1>", on_release)
+    def _start_loop(self):
+        if not self.camera_ok:
+            return
 
-    # Add info label
-    info_text = f"Distance: {dist_mm:.2f} mm" if dist_mm else "SDK data unavailable"
-    info_label = tk.Label(_result_window, text=info_text, bg="#2b2b2b", fg="#3DDB7E",
-                         font=("Arial", 12, "bold"))
-    info_label.pack(pady=10)
+        ret, frame = self.cap.read()
+        if ret:
+            self.current_frame = frame.copy()
+            frame = detect_cable(frame)
+            self._update_display()
 
-    # Display initial image
-    update_display()
+            # Update status bar
+            self.pixel_measure.update()
+            zoom, mpp = self.pixel_measure.get_values()
+            if zoom:
+                self.zoom_lbl.config(text=f"Zoom: {zoom:.2f}x")
+            if mpp:
+                self.mpp_lbl.config(text=f"{mpp:.4f} mm/px")
 
-    # Make window closable and on top
-    _result_window.focus()
-    _result_window.attributes('-topmost', True)
+            color = GREEN if cable_detector.stable_status == "Cable IN" else MUTED
+            self.cable_lbl.config(text=f"●{cable_detector.stable_status}", fg=color)
 
-# ---------------- GUI setup ----------------
-root = tk.Tk()
-root.title("Cable Camera Controller")
-root.geometry("900x700")
-root.configure(bg="#2b2b2b")
+        self.root.after(10, self._start_loop)
 
-label = tk.Label(root, bg="black")
-label.pack(pady=10)
+    def run(self):
+        self.root.mainloop()
 
-label.bind("<Button-1>", inter.mouse_down)
-label.bind("<B1-Motion>", inter.mouse_move)
-label.bind("<ButtonRelease-1>", inter.mouse_up)
-label.bind("<MouseWheel>", inter.mouse_scroll)
-
-# ---------------- Scan Control Buttons ----------------
-
-# Capture button
-def capture_now():
-    global current_frame
-    if current_frame is None:
-        print("No frame available")
-        return
-    result = run_inference(current_frame)
-    if result:
-        p1, p2, dist_mm = result
-        show_result_window(current_frame, p1, p2, dist_mm)
-        print(f"✓ Captured: {dist_mm:.2f} mm")
-    else:
-        print("✗ Capture failed - inference error")
-
-btn_capture = tk.Button(
-    root,
-    text="📸 Capture Measurement",
-    command=capture_now,
-    bg="#FF5722",
-    fg="white",
-    font=("Arial", 12, "bold"),
-    padx=20,
-    pady=8,
-    width=20
-)
-btn_capture.pack(pady=10)
-
-# ---------------- Update Frame Function ----------------
-def update_frame():
-    global current_frame, match_score, _result_window
-
-    ret, frame = cap.read()
-    if ret:
-        current_frame = frame.copy()
-        h, w = frame.shape[:2]
-
-        # ---------------- Zoom & Pan ----------------
-        new_w = int(w / inter.zoom)
-        new_h = int(h / inter.zoom)
-
-        center_x = w // 2 + inter.pan_x
-        center_y = h // 2 + inter.pan_y
-
-        x1 = max(center_x - new_w // 2, 0)
-        y1 = max(center_y - new_h // 2, 0)
-        x2 = min(center_x + new_w // 2, w)
-        y2 = min(center_y + new_h // 2, h)
-
-        frame = frame[y1:y2, x1:x2]
-        frame = cv2.resize(frame, (w, h))
-
-        # ---------------- Cable detection ----------------
-        frame = detect_cable(frame)
-
-
-        # ---------------- Display ----------------
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        img = Image.fromarray(frame_rgb)
-        imgtk = ImageTk.PhotoImage(image=img)
-
-        label.imgtk = imgtk
-        label.configure(image=imgtk)
-
-    label.after(10, update_frame)
-
-# ---------------- Start loop ----------------
+# ==================== MAIN ====================
 if __name__ == "__main__":
-    update_frame()
-    root.mainloop()
-    cap.release()
+    machine = LoginWindow().show()
+    if machine:
+        app = MainApp(machine)
+        app.run()
