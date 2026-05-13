@@ -44,11 +44,8 @@ camera_status = "Camera not loaded"
 
 # --------- Scan + inference state ---------
 _tf_model = None
-_cable_in_start = None
-_auto_triggered = False
 _result_window = None
 _is_scanning = False
-CABLE_IN_REQUIRED = 5.0
 MODEL_PATH = os.path.join(os.path.dirname(__file__),
     "model_bellmounth_mesure", "model", "CNN_BELMOUNTH_MODEL_V1.h5")
 
@@ -229,20 +226,18 @@ label.bind("<MouseWheel>", inter.mouse_scroll)
 
 # ---------------- Scan Control Buttons ----------------
 def start_scan():
-    global _is_scanning, _cable_in_start, _auto_triggered
+    global _is_scanning
     _is_scanning = True
-    _cable_in_start = None
-    _auto_triggered = False
     btn_start.config(state=tk.DISABLED, bg="#555555")
+    btn_capture.config(state=tk.NORMAL, bg="#4CAF50")
     btn_stop.config(state=tk.NORMAL, bg="#FF5722")
     status_label.config(text="Status: SCANNING", fg="#3DDB7E")
 
 def stop_scan():
-    global _is_scanning, _cable_in_start, _auto_triggered
+    global _is_scanning
     _is_scanning = False
-    _cable_in_start = None
-    _auto_triggered = False
     btn_start.config(state=tk.NORMAL, bg="#FF5722")
+    btn_capture.config(state=tk.DISABLED, bg="#555555")
     btn_stop.config(state=tk.DISABLED, bg="#555555")
     status_label.config(text="Status: IDLE", fg="#FFA500")
 
@@ -263,6 +258,33 @@ btn_start = tk.Button(
 )
 btn_start.pack(side=tk.LEFT, padx=5)
 
+def capture_now():
+    global current_frame
+    if current_frame is None:
+        print("No frame available")
+        return
+    result = run_inference(current_frame)
+    if result:
+        p1, p2, dist_mm = result
+        show_result_window(current_frame, p1, p2, dist_mm)
+        print(f"✓ Captured: {dist_mm:.2f} mm")
+    else:
+        print("✗ Capture failed - inference error")
+
+btn_capture = tk.Button(
+    btn_frame,
+    text="📸 Capture",
+    command=capture_now,
+    bg="#4CAF50",
+    fg="white",
+    font=("Arial", 11, "bold"),
+    padx=15,
+    pady=5,
+    width=12,
+    state=tk.DISABLED
+)
+btn_capture.pack(side=tk.LEFT, padx=5)
+
 btn_stop = tk.Button(
     btn_frame,
     text="⏹ Stop Scan",
@@ -277,7 +299,7 @@ btn_stop = tk.Button(
 )
 btn_stop.pack(side=tk.LEFT, padx=5)
 
-# Status and countdown label
+# Status label
 status_label = tk.Label(
     root,
     text="Status: IDLE",
@@ -287,18 +309,9 @@ status_label = tk.Label(
 )
 status_label.pack()
 
-countdown_label = tk.Label(
-    root,
-    text="Cable IN timer: --",
-    bg="#2b2b2b",
-    fg="#FFFFFF",
-    font=("Arial", 9)
-)
-countdown_label.pack()
-
 # ---------------- Update Frame Function ----------------
 def update_frame():
-    global current_frame, match_score, _cable_in_start, _auto_triggered, _result_window, _is_scanning, countdown_label
+    global current_frame, match_score, _result_window
 
     ret, frame = cap.read()
     if ret:
@@ -323,31 +336,6 @@ def update_frame():
         # ---------------- Cable detection ----------------
         frame = detect_cable(frame)
 
-        # -------- 5-second scan trigger (only when scanning) --------
-        if _is_scanning:
-            if cable_detector.stable_status == "Cable IN":
-                if _cable_in_start is None:
-                    _cable_in_start = time.time()
-
-                elapsed = time.time() - _cable_in_start
-                remaining = max(0, CABLE_IN_REQUIRED - elapsed)
-                countdown_label.config(text=f"Cable IN timer: {remaining:.1f}s", fg="#3DDB7E")
-
-                if not _auto_triggered and elapsed >= CABLE_IN_REQUIRED:
-                    _auto_triggered = True
-                    result = run_inference(current_frame)
-                    if result:
-                        p1, p2, dist_mm = result
-                        show_result_window(current_frame, p1, p2, dist_mm)
-                        print(f"✓ Scan captured: {dist_mm:.2f} mm")
-            else:
-                _cable_in_start = None
-                _auto_triggered = False
-                countdown_label.config(text="Cable IN timer: --", fg="#FFFFFF")
-        else:
-            _cable_in_start = None
-            _auto_triggered = False
-            countdown_label.config(text="Cable IN timer: --", fg="#FFFFFF")
 
         # ---------------- Display ----------------
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
