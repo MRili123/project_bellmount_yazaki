@@ -381,14 +381,35 @@ class MainApp:
     def _on_press(self, event):
         if self.mode == "MANUAL" and self.current_frame is not None:
             h, w = self.current_frame.shape[:2]
-            x = int(event.x * w / self.canvas.winfo_width())
-            y = int(event.y * h / self.canvas.winfo_height())
+            canvas_w = self.canvas.winfo_width()
+            canvas_h = self.canvas.winfo_height()
 
-            if self.p1 is None:
-                self.p1 = (x, y)
-            elif self.p2 is None:
-                self.p2 = (x, y)
-                self._compute_distance()
+            if canvas_w > 0 and canvas_h > 0:
+                norm_x = event.x / canvas_w
+                norm_y = event.y / canvas_h
+
+                if self.zoom > 1:
+                    new_w = int(w / self.zoom)
+                    new_h = int(h / self.zoom)
+                    cx = w // 2 + self.pan_x
+                    cy = h // 2 + self.pan_y
+                    x1 = max(cx - new_w // 2, 0)
+                    y1 = max(cy - new_h // 2, 0)
+                    x2 = min(cx + new_w // 2, w)
+                    y2 = min(cy + new_h // 2, h)
+                    disp_w = x2 - x1
+                    disp_h = y2 - y1
+                    x = int(x1 + norm_x * disp_w)
+                    y = int(y1 + norm_y * disp_h)
+                else:
+                    x = int(norm_x * w)
+                    y = int(norm_y * h)
+
+                if self.p1 is None:
+                    self.p1 = (x, y)
+                elif self.p2 is None:
+                    self.p2 = (x, y)
+                    self._compute_distance()
         else:
             self.drag_start = (event.x, event.y)
 
@@ -611,7 +632,7 @@ class MainApp:
             self.cable_dot.config(fg=color)
             self.cable_lbl.config(text=cable_detector.stable_status, fg=color)
 
-        self.root.after(10, self._start_loop)
+        self.root.after(33, self._start_loop)
 
     def run(self):
         self.root.mainloop()
