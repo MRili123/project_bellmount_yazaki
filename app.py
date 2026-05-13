@@ -42,6 +42,7 @@ _tf_model = None
 _cable_in_start = None
 _auto_triggered = False
 _result_overlay = None
+_result_window = None
 CABLE_IN_REQUIRED = 5.0
 OVERLAY_DURATION = 8.0
 MODEL_PATH = os.path.join(os.path.dirname(__file__),
@@ -87,6 +88,51 @@ def run_inference(frame):
         print(f"Inference error: {e}")
         return None
 
+def show_result_window(frame, p1, p2, dist_mm):
+    global _result_window
+
+    # Close previous window if exists
+    try:
+        if _result_window and _result_window.winfo_exists():
+            _result_window.destroy()
+    except:
+        pass
+
+    # Create new window
+    _result_window = tk.Toplevel(root)
+    _result_window.title("Cable Measurement Result")
+    _result_window.geometry("800x600")
+    _result_window.configure(bg="#2b2b2b")
+
+    # Draw overlay on frame
+    result_frame = frame.copy()
+    cv2.circle(result_frame, p1, 8, (0, 255, 0), -1)
+    cv2.circle(result_frame, p2, 8, (0, 255, 0), -1)
+    cv2.line(result_frame, p1, p2, (0, 255, 255), 2)
+    label_text = f"{dist_mm:.2f} mm" if dist_mm else "SDK unavailable"
+    mid = ((p1[0] + p2[0]) // 2, (p1[1] + p2[1]) // 2 - 15)
+    cv2.putText(result_frame, label_text, mid, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+    # Convert to Tkinter image
+    frame_rgb = cv2.cvtColor(result_frame, cv2.COLOR_BGR2RGB)
+    img = Image.fromarray(frame_rgb)
+    imgtk = ImageTk.PhotoImage(image=img)
+
+    # Create label
+    result_label = tk.Label(_result_window, image=imgtk, bg="black")
+    result_label.image = imgtk
+    result_label.pack(fill=tk.BOTH, expand=True)
+
+    # Add info label
+    info_text = f"Distance: {dist_mm:.2f} mm" if dist_mm else "SDK data unavailable"
+    info_label = tk.Label(_result_window, text=info_text, bg="#2b2b2b", fg="#3DDB7E",
+                         font=("Arial", 12, "bold"))
+    info_label.pack(pady=10)
+
+    # Make window closable
+    _result_window.focus()
+    _result_window.attributes('-topmost', True)
+
 # ---------------- GUI setup ----------------
 root = tk.Tk()
 root.title("Cable Camera Controller")
@@ -128,7 +174,7 @@ btn_screenshot.pack(pady=5)
 
 # ---------------- Update Frame Function ----------------
 def update_frame():
-    global current_frame, match_score, _cable_in_start, _auto_triggered, _result_overlay
+    global current_frame, match_score, _cable_in_start, _auto_triggered, _result_window
 
     ret, frame = cap.read()
     if ret:
@@ -162,23 +208,10 @@ def update_frame():
                 result = run_inference(current_frame)
                 if result:
                     p1, p2, dist_mm = result
-                    _result_overlay = (p1, p2, dist_mm, time.time() + OVERLAY_DURATION)
+                    show_result_window(current_frame, p1, p2, dist_mm)
         else:
             _cable_in_start = None
             _auto_triggered = False
-
-        # -------- Draw inference results overlay --------
-        if _result_overlay:
-            p1, p2, dist_mm, expire = _result_overlay
-            if time.time() < expire:
-                cv2.circle(frame, p1, 8, (0, 255, 0), -1)
-                cv2.circle(frame, p2, 8, (0, 255, 0), -1)
-                cv2.line(frame, p1, p2, (0, 255, 255), 2)
-                label_text = f"{dist_mm:.2f} mm" if dist_mm else "SDK unavailable"
-                mid = ((p1[0] + p2[0]) // 2, (p1[1] + p2[1]) // 2 - 15)
-                cv2.putText(frame, label_text, mid, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            else:
-                _result_overlay = None
 
         # ---------------- Display ----------------
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
