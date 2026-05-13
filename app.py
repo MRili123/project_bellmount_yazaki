@@ -105,28 +105,101 @@ def show_result_window(frame, p1, p2, dist_mm):
 
     # Create new window
     _result_window = tk.Toplevel(root)
-    _result_window.title("Cable Measurement Result")
-    _result_window.geometry("800x600")
+    _result_window.title("Cable Measurement Result - Scroll to zoom, Click & drag to pan")
+    _result_window.geometry("900x700")
     _result_window.configure(bg="#2b2b2b")
 
-    # Draw overlay on frame
-    result_frame = frame.copy()
-    cv2.circle(result_frame, p1, 8, (0, 255, 0), -1)
-    cv2.circle(result_frame, p2, 8, (0, 255, 0), -1)
-    cv2.line(result_frame, p1, p2, (0, 255, 255), 2)
-    label_text = f"{dist_mm:.2f} mm" if dist_mm else "SDK unavailable"
-    mid = ((p1[0] + p2[0]) // 2, (p1[1] + p2[1]) // 2 - 15)
-    cv2.putText(result_frame, label_text, mid, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+    # Store result data for interaction
+    original_frame = frame.copy()
+    result_data = {
+        'frame': original_frame,
+        'p1': p1,
+        'p2': p2,
+        'dist_mm': dist_mm,
+        'zoom': 1.0,
+        'pan_x': 0,
+        'pan_y': 0,
+        'drag_start': None,
+        'h': original_frame.shape[0],
+        'w': original_frame.shape[1]
+    }
 
-    # Convert to Tkinter image
-    frame_rgb = cv2.cvtColor(result_frame, cv2.COLOR_BGR2RGB)
-    img = Image.fromarray(frame_rgb)
-    imgtk = ImageTk.PhotoImage(image=img)
+    # Create canvas for image display
+    canvas = tk.Canvas(_result_window, bg="black", cursor="cross")
+    canvas.pack(fill=tk.BOTH, expand=True)
 
-    # Create label
-    result_label = tk.Label(_result_window, image=imgtk, bg="black")
-    result_label.image = imgtk
-    result_label.pack(fill=tk.BOTH, expand=True)
+    def update_display():
+        """Redraw image with zoom and pan applied"""
+        disp_frame = result_data['frame'].copy()
+
+        # Apply zoom and pan
+        h, w = disp_frame.shape[:2]
+        if result_data['zoom'] > 1:
+            new_w = int(w / result_data['zoom'])
+            new_h = int(h / result_data['zoom'])
+            center_x = w // 2 + result_data['pan_x']
+            center_y = h // 2 + result_data['pan_y']
+            x1 = max(center_x - new_w // 2, 0)
+            y1 = max(center_y - new_h // 2, 0)
+            x2 = min(center_x + new_w // 2, w)
+            y2 = min(center_y + new_h // 2, h)
+            disp_frame = disp_frame[y1:y2, x1:x2]
+            disp_frame = cv2.resize(disp_frame, (w, h))
+
+        # Draw overlay
+        cv2.circle(disp_frame, result_data['p1'], 8, (0, 255, 0), -1)
+        cv2.circle(disp_frame, result_data['p2'], 8, (0, 255, 0), -1)
+        cv2.line(disp_frame, result_data['p1'], result_data['p2'], (0, 255, 255), 2)
+        label_text = f"{result_data['dist_mm']:.2f} mm" if result_data['dist_mm'] else "SDK unavailable"
+        mid = ((result_data['p1'][0] + result_data['p2'][0]) // 2,
+               (result_data['p1'][1] + result_data['p2'][1]) // 2 - 15)
+        cv2.putText(disp_frame, label_text, mid, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+        # Add zoom indicator
+        zoom_text = f"Zoom: {result_data['zoom']:.1f}x" if result_data['zoom'] > 1 else ""
+        if zoom_text:
+            cv2.putText(disp_frame, zoom_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+        # Convert to Tkinter
+        frame_rgb = cv2.cvtColor(disp_frame, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(frame_rgb)
+        imgtk = ImageTk.PhotoImage(image=img)
+
+        canvas.create_image(0, 0, anchor='nw', image=imgtk)
+        canvas.image = imgtk
+
+    def on_scroll(event):
+        """Handle mouse wheel zoom"""
+        if event.delta > 0:
+            result_data['zoom'] *= 1.1
+        else:
+            result_data['zoom'] /= 1.1
+        result_data['zoom'] = max(1, min(result_data['zoom'], 10))
+        update_display()
+
+    def on_press(event):
+        """Handle mouse press for pan"""
+        result_data['drag_start'] = (event.x, event.y)
+
+    def on_move(event):
+        """Handle mouse move for pan"""
+        if result_data['drag_start'] is not None and result_data['zoom'] > 1:
+            dx = event.x - result_data['drag_start'][0]
+            dy = event.y - result_data['drag_start'][1]
+            result_data['pan_x'] -= int(dx / result_data['zoom'])
+            result_data['pan_y'] -= int(dy / result_data['zoom'])
+            result_data['drag_start'] = (event.x, event.y)
+            update_display()
+
+    def on_release(event):
+        """Handle mouse release"""
+        result_data['drag_start'] = None
+
+    # Bind events
+    canvas.bind("<MouseWheel>", on_scroll)
+    canvas.bind("<Button-1>", on_press)
+    canvas.bind("<B1-Motion>", on_move)
+    canvas.bind("<ButtonRelease-1>", on_release)
 
     # Add info label
     info_text = f"Distance: {dist_mm:.2f} mm" if dist_mm else "SDK data unavailable"
@@ -134,7 +207,10 @@ def show_result_window(frame, p1, p2, dist_mm):
                          font=("Arial", 12, "bold"))
     info_label.pack(pady=10)
 
-    # Make window closable
+    # Display initial image
+    update_display()
+
+    # Make window closable and on top
     _result_window.focus()
     _result_window.attributes('-topmost', True)
 
