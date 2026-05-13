@@ -6,20 +6,11 @@
 - Python 3.8 or higher
 - Install from: https://www.python.org/downloads/
 
-### 2. Dino-Lite SDK Installation (REQUIRED for measurement features)
+### 2. Dino-Lite SDK (Already Included)
 
-The project uses the DNX64 SDK from Dino-Lite for microscope integration and pixel measurement.
+The DNX64 SDK DLL is already included in the `lib/` directory of this project. No separate installation needed!
 
-**Steps:**
-1. Download DNX64 SDK from: http://www.dinolite.com.cn/En/download/ (or contact Dino-Lite support)
-2. Install to default location: `C:\Program Files\DNX64\`
-3. The installation includes `DNX64.dll` which is required by the project
-4. After installation, the path in `app.py` line 15 should point to the correct location:
-   ```python
-   pixel_measure = PixelMeasure(r"C:\Program Files\DNX64\DNX64.dll")
-   ```
-
-**Note:** If you install to a different location, update the path in `app.py` accordingly.
+The project uses the DNX64 SDK from Dino-Lite for microscope integration and pixel measurement. The DLL is bundled, so the app will work on any Windows PC without additional SDK installation.
 
 ### 3. Python Dependencies
 

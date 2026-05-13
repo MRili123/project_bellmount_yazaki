@@ -6,7 +6,9 @@ import sys
 import os
 
 class PixelMeasure:
-    def __init__(self, dll_path):
+    def __init__(self, dll_path=None):
+        if dll_path is None:
+            dll_path = os.path.join(os.path.dirname(__file__), "lib", "DNX64.dll")
         # Hide SDK spam
         sys.stdout = open(os.devnull, 'w')
 
