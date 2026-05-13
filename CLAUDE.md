@@ -83,7 +83,20 @@ bellmounth-project/
 
 ## What I (Claude) Have Done
 
-### Session: May 13, 2026
+### Session 2: May 13, 2026 (continued)
+
+**Auto-Capture + CNN Inference Feature:**
+1. Explored model infrastructure and preprocessing pipeline
+2. Designed 5-second auto-trigger state machine
+3. Implemented full inference pipeline in app.py:
+   - Added `load_model_once()` for lazy model loading
+   - Added `run_inference()` with full preprocessing
+   - Added 5-second timer tracking in `update_frame()`
+   - Added overlay drawing (keypoints, line, distance label)
+4. Integrated with existing SDL + cable detection
+5. Committed and pushed to GitHub (commit: `7706ed6`)
+
+### Session 1: May 13, 2026
 
 1. **Analyzed Project** - Read all main modules to understand architecture
 2. **Created Documentation** - Added comprehensive `SETUP.md`
@@ -124,6 +137,32 @@ python app.py              # Main cable detection with live camera
 cd model_bellmounth_mesure
 python model_app.py        # ML training and inference UI
 ```
+
+## Auto-Capture + CNN Inference Feature
+
+When a cable is detected as stable "IN" for 5 continuous seconds:
+1. **Auto-triggers** frame capture
+2. **Preprocesses** the frame: adaptive threshold → binary image ("threads form")
+3. **Runs CNN inference** via `CNN_BELMOUNTH_MODEL_V1.h5` to predict cable keypoints
+4. **Calculates real distance** using SDK zoom and mm_per_pixel
+5. **Overlays results** on live feed:
+   - Green dots on keypoint locations (P1, P2)
+   - Yellow line connecting the two keypoints
+   - Distance label in millimeters (X.XX mm)
+6. **Displays overlay** for 8 seconds, then clears
+7. **Resets timer** if cable leaves IN zone before 5 seconds (must be continuous)
+
+**Model Input/Output:**
+- Input: Grayscale image resized to 640×480 pixels (after thresholding)
+- Output: 4 normalized values `[x1, y1, x2, y2]` representing two keypoints
+- Real distance = pixel_distance × mm_per_pixel (from SDK calibration)
+
+**Implementation Details:**
+- Lazy-loads TensorFlow model on first trigger (no overhead if cable never stabilizes)
+- Full error handling for missing TensorFlow/Keras
+- Reuses existing `apply_threshold()` from `model_bellmounth_mesure/utils.py`
+- Non-blocking: inference happens within the 10ms frame loop
+- Requires TensorFlow/Keras installed: `pip install tensorflow`
 
 ## Important Notes
 
