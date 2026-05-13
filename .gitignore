@@ -1,2 +1,23 @@
+# Screenshots and test images
 screenshot/
 screenshots/
+test_viz_*.png
+*.png
+test_images/
+model_bellmounth_mesure/screenshots/
+model_bellmounth_mesure/captured/
+model_bellmounth_mesure/dataset/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# IDE and OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
