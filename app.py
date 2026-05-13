@@ -277,7 +277,7 @@ btn_stop = tk.Button(
 )
 btn_stop.pack(side=tk.LEFT, padx=5)
 
-# Status label
+# Status and countdown label
 status_label = tk.Label(
     root,
     text="Status: IDLE",
@@ -287,9 +287,18 @@ status_label = tk.Label(
 )
 status_label.pack()
 
+countdown_label = tk.Label(
+    root,
+    text="Cable IN timer: --",
+    bg="#2b2b2b",
+    fg="#FFFFFF",
+    font=("Arial", 9)
+)
+countdown_label.pack()
+
 # ---------------- Update Frame Function ----------------
 def update_frame():
-    global current_frame, match_score, _cable_in_start, _auto_triggered, _result_window, _is_scanning
+    global current_frame, match_score, _cable_in_start, _auto_triggered, _result_window, _is_scanning, countdown_label
 
     ret, frame = cap.read()
     if ret:
@@ -319,18 +328,26 @@ def update_frame():
             if cable_detector.stable_status == "Cable IN":
                 if _cable_in_start is None:
                     _cable_in_start = time.time()
-                elif not _auto_triggered and (time.time() - _cable_in_start) >= CABLE_IN_REQUIRED:
+
+                elapsed = time.time() - _cable_in_start
+                remaining = max(0, CABLE_IN_REQUIRED - elapsed)
+                countdown_label.config(text=f"Cable IN timer: {remaining:.1f}s", fg="#3DDB7E")
+
+                if not _auto_triggered and elapsed >= CABLE_IN_REQUIRED:
                     _auto_triggered = True
                     result = run_inference(current_frame)
                     if result:
                         p1, p2, dist_mm = result
                         show_result_window(current_frame, p1, p2, dist_mm)
+                        print(f"✓ Scan captured: {dist_mm:.2f} mm")
             else:
                 _cable_in_start = None
                 _auto_triggered = False
+                countdown_label.config(text="Cable IN timer: --", fg="#FFFFFF")
         else:
             _cable_in_start = None
             _auto_triggered = False
+            countdown_label.config(text="Cable IN timer: --", fg="#FFFFFF")
 
         # ---------------- Display ----------------
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
