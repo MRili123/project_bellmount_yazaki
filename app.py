@@ -1,9 +1,8 @@
-# Bellmounth Mesure - Professional Measurement System
-# Complete rewrite with login, modern UI, auto/manual modes, annotation saving
+# Bellmounth Inspection System - Premium Dark Pro UI for Yazaki
+# Professional measurement application with enterprise-grade interface
 
 import cv2
 import tkinter as tk
-from tkinter import messagebox
 import json
 import time
 import math
@@ -29,17 +28,19 @@ try:
 except ImportError:
     _TF_AVAILABLE = False
 
-# ==================== COLORS ====================
-BG = "#0D0F14"
-SURFACE = "#141720"
-CARD = "#1A1E2A"
-BORDER = "#252A38"
-ACCENT = "#4F8EF7"
-GREEN = "#3DDB7E"
-RED = "#F75F5F"
-YELLOW = "#F7C948"
-TEXT = "#E8ECF5"
-MUTED = "#6B7394"
+# ==================== COLORS (Dark Pro Palette) ====================
+BG      = "#0C0C12"
+PANEL   = "#101018"
+CARD    = "#15151E"
+BORDER  = "#20202E"
+BTN     = "#0D47A1"
+ACCENT  = "#00BFFF"
+GREEN   = "#00E676"
+RED     = "#FF2D55"
+AMBER   = "#FFB300"
+TEXT    = "#E8E8F0"
+TEXT2   = "#5C5C7A"
+SEP     = "#1C1C28"
 
 # ==================== CONFIG ====================
 CONFIG_FILE = Path(__file__).parent / "config.json"
@@ -49,7 +50,6 @@ THRESH_DIR = DATASET_DIR / "thresholded"
 ANNOTATIONS_FILE = DATASET_DIR / "annotations.json"
 MODEL_PATH = Path(__file__).parent / "model_bellmounth_mesure" / "model" / "CNN_BELMOUNTH_MODEL_V1.h5"
 
-# Create directories
 for d in [ORIG_DIR, THRESH_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 if not ANNOTATIONS_FILE.exists():
@@ -59,12 +59,12 @@ if not ANNOTATIONS_FILE.exists():
 class LoginWindow:
     def __init__(self):
         self.window = tk.Tk()
-        self.window.title("Bellmounth Mesure - Login")
-        self.window.geometry("400x300")
+        self.window.title("Bellmounth Inspection System")
+        self.window.geometry("480x560")
         self.window.configure(bg=BG)
         self.window.resizable(False, False)
+        self.window.tk.call('wm', 'iconphoto', self.window._w)
 
-        # Load config
         self.config = self._load_config()
         self.result = None
 
@@ -78,42 +78,47 @@ class LoginWindow:
         return {"machine_name": "LAB-01", "password": "bellmounth"}
 
     def _build_ui(self):
-        # Title
-        title = tk.Label(self.window, text="◈ BELLMOUNTH MESURE",
-                        bg=BG, fg=ACCENT, font=("Arial", 18, "bold"))
-        title.pack(pady=30)
+        tk.Frame(self.window, bg=BG, height=40).pack()
 
-        # Card frame
-        card = tk.Frame(self.window, bg=CARD, relief=tk.FLAT, bd=0)
-        card.pack(padx=20, pady=10, fill=tk.BOTH, expand=True)
+        tk.Label(self.window, text="YAZAKI", bg=BG, fg=TEXT,
+                font=("Arial", 12, "bold")).pack()
+        tk.Label(self.window, text="BELLMOUNTH INSPECTION SYSTEM", bg=BG, fg=ACCENT,
+                font=("Arial", 22, "bold")).pack(pady=(4, 20))
 
-        # Machine name
-        tk.Label(card, text="Machine Name:", bg=CARD, fg=TEXT,
-                font=("Arial", 10)).pack(anchor=tk.W, padx=15, pady=(15, 5))
-        self.machine_entry = tk.Entry(card, font=("Arial", 11),
-                                      width=25, bg=SURFACE, fg=TEXT,
-                                      insertbackground=TEXT, bd=0)
+        sep = tk.Frame(self.window, bg=SEP, height=1)
+        sep.pack(fill=tk.X, padx=60, pady=(0, 30))
+
+        card_outer = tk.Frame(self.window, bg=BORDER)
+        card_outer.pack(padx=40, pady=0, fill=tk.BOTH, expand=True)
+
+        card = tk.Frame(card_outer, bg=CARD)
+        card.pack(fill=tk.BOTH, padx=1, pady=1)
+
+        tk.Label(card, text="MACHINE NAME", bg=CARD, fg=TEXT2,
+                font=("Arial", 8, "bold")).pack(anchor=tk.W, padx=24, pady=(24, 6))
+        self.machine_entry = tk.Entry(card, font=("Consolas", 12),
+                                     bg=PANEL, fg=TEXT, insertbackground=TEXT,
+                                     relief=tk.FLAT, bd=0, highlightthickness=1,
+                                     highlightbackground=BORDER, highlightcolor=ACCENT)
         self.machine_entry.insert(0, self.config.get("machine_name", "LAB-01"))
-        self.machine_entry.pack(padx=15, pady=(0, 10), fill=tk.X)
+        self.machine_entry.pack(padx=24, pady=(0, 16), fill=tk.X)
 
-        # Password
-        tk.Label(card, text="Password:", bg=CARD, fg=TEXT,
-                font=("Arial", 10)).pack(anchor=tk.W, padx=15, pady=(10, 5))
-        self.password_entry = tk.Entry(card, font=("Arial", 11),
-                                       width=25, bg=SURFACE, fg=TEXT,
-                                       insertbackground=TEXT, show="•", bd=0)
-        self.password_entry.pack(padx=15, pady=(0, 15), fill=tk.X)
+        tk.Label(card, text="PASSWORD", bg=CARD, fg=TEXT2,
+                font=("Arial", 8, "bold")).pack(anchor=tk.W, padx=24, pady=(0, 6))
+        self.password_entry = tk.Entry(card, font=("Consolas", 12), show="●",
+                                      bg=PANEL, fg=TEXT, insertbackground=TEXT,
+                                      relief=tk.FLAT, bd=0, highlightthickness=1,
+                                      highlightbackground=BORDER, highlightcolor=ACCENT)
+        self.password_entry.pack(padx=24, pady=(0, 20), fill=tk.X)
 
-        # Error label
         self.error_label = tk.Label(card, text="", bg=CARD, fg=RED,
                                    font=("Arial", 9))
-        self.error_label.pack()
+        self.error_label.pack(pady=(0, 12))
 
-        # Login button
-        btn = tk.Button(card, text="LOGIN", command=self._login,
-                       bg=ACCENT, fg="white", font=("Arial", 11, "bold"),
-                       relief=tk.FLAT, bd=0, pady=8)
-        btn.pack(pady=15, fill=tk.X, padx=15)
+        tk.Button(card, text="SIGN IN", command=self._login,
+                 bg=BTN, fg=TEXT, font=("Arial", 11, "bold"),
+                 relief=tk.FLAT, bd=0, pady=12, activebackground="#0D47A1",
+                 activeforeground=TEXT).pack(padx=24, pady=(0, 28), fill=tk.X)
 
         self.password_entry.bind("<Return>", lambda e: self._login())
 
@@ -125,7 +130,7 @@ class LoginWindow:
             self.result = machine
             self.window.destroy()
         else:
-            self.error_label.config(text="❌ Incorrect password")
+            self.error_label.config(text="⚠ Incorrect password")
             self.password_entry.delete(0, tk.END)
 
     def show(self):
@@ -136,21 +141,19 @@ class LoginWindow:
 class MainApp:
     def __init__(self, machine_name):
         self.root = tk.Tk()
-        self.root.title(f"Bellmounth Mesure - {machine_name}")
-        self.root.geometry("1400x900")
+        self.root.title(f"Bellmounth Inspection — {machine_name}")
+        self.root.geometry("1440x900")
         self.root.configure(bg=BG)
+        self.root.state('zoomed')
         self.machine_name = machine_name
 
-        # Initialize SDK
         self._init_sdk()
-
         if not self.camera_ok:
             self._show_no_camera()
             return
 
-        # State
         self.current_frame = None
-        self.mode = "AUTO"  # AUTO or MANUAL
+        self.mode = "AUTO"
         self.p1 = None
         self.p2 = None
         self.dist_mm = None
@@ -159,30 +162,24 @@ class MainApp:
         self.pan_y = 0
         self.drag_start = None
         self.annotation_count = self._count_annotations()
-
-        # TF model
         self._tf_model = None
 
         self._build_ui()
+        self._update_clock()
         self._start_loop()
 
     def _init_sdk(self):
-        """Initialize Dino-Lite camera and SDK"""
         self.camera_ok = False
         self.cap = None
-        self.dnx = None
         self.pixel_measure = None
 
         try:
             self.cap = get_camera()
             if self.cap is None:
-                print("Camera not found")
                 return
-
             ret, frame = self.cap.read()
             if not ret:
                 return
-
             self.camera_width = frame.shape[1]
             self.camera_height = frame.shape[0]
             self.pixel_measure = PixelMeasure(camera_width=self.camera_width)
@@ -191,161 +188,188 @@ class MainApp:
             print(f"SDK init error: {e}")
 
     def _show_no_camera(self):
-        """Show error screen when no Dino-Lite detected"""
         frame = tk.Frame(self.root, bg=BG)
         frame.pack(fill=tk.BOTH, expand=True)
 
-        tk.Label(frame, text="⚠️", font=("Arial", 80), fg=RED, bg=BG).pack(pady=30)
-        tk.Label(frame, text="No Dino-Lite Camera Detected", font=("Arial", 18),
-                fg=TEXT, bg=BG).pack(pady=10)
-        tk.Label(frame, text="Please connect a Dino-Lite microscope and restart.",
-                font=("Arial", 12), fg=MUTED, bg=BG).pack(pady=10)
+        tk.Label(frame, text="✕", font=("Arial", 72, "bold"), fg=RED, bg=BG).pack(pady=20)
+        tk.Label(frame, text="NO CAMERA DETECTED", font=("Arial", 18, "bold"),
+                fg=TEXT, bg=BG).pack(pady=6)
+        tk.Label(frame, text="Connect a Dino-Lite microscope and press Retry.",
+                font=("Arial", 11), fg=TEXT2, bg=BG).pack(pady=6)
 
-        def retry():
-            self.root.destroy()
-            LoginWindow().show()
+        btn_row = tk.Frame(frame, bg=BG)
+        btn_row.pack(pady=30)
 
-        tk.Button(frame, text="Retry", command=retry, bg=ACCENT, fg="white",
-                 font=("Arial", 11, "bold"), padx=20, pady=10).pack(pady=20)
+        tk.Button(btn_row, text="RETRY", command=self.root.destroy,
+                 bg=BTN, fg=TEXT, font=("Arial", 10, "bold"),
+                 relief=tk.FLAT, bd=0, padx=30, pady=10).pack(side=tk.LEFT, padx=6)
+        tk.Button(btn_row, text="QUIT", command=self.root.quit,
+                 bg=SEP, fg=TEXT, font=("Arial", 10, "bold"),
+                 relief=tk.FLAT, bd=0, padx=30, pady=10).pack(side=tk.LEFT, padx=6)
+
+    def _card(self, parent, title):
+        outer = tk.Frame(parent, bg=BORDER)
+        outer.pack(fill=tk.X, padx=12, pady=5)
+        inner = tk.Frame(outer, bg=CARD)
+        inner.pack(fill=tk.BOTH, padx=1, pady=1)
+        hrow = tk.Frame(inner, bg=CARD)
+        hrow.pack(fill=tk.X, padx=12, pady=(10, 6))
+        tk.Label(hrow, text=title, bg=CARD, fg=TEXT2,
+                font=("Arial", 8, "bold")).pack(side=tk.LEFT)
+        tk.Frame(hrow, bg=SEP, height=1).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(8,0), pady=6)
+        body = tk.Frame(inner, bg=CARD)
+        body.pack(fill=tk.X, padx=12, pady=(0, 12))
+        return body
 
     def _build_ui(self):
-        """Build main UI layout"""
-        # Top bar
-        top = tk.Frame(self.root, bg=SURFACE, height=50)
+        # Header bar
+        top = tk.Frame(self.root, bg=PANEL, height=58)
         top.pack(fill=tk.X, side=tk.TOP)
         top.pack_propagate(False)
 
-        tk.Label(top, text="◈ BELLMOUNTH MESURE", bg=SURFACE, fg=ACCENT,
-                font=("Arial", 14, "bold")).pack(side=tk.LEFT, padx=20, pady=12)
-        tk.Label(top, text=f"Machine: {self.machine_name}", bg=SURFACE, fg=TEXT,
-                font=("Arial", 10)).pack(side=tk.LEFT, padx=10, pady=12)
+        tk.Label(top, text="YAZAKI", bg=PANEL, fg=TEXT,
+                font=("Arial", 13, "bold"), padx=20).pack(side=tk.LEFT, pady=12)
+        tk.Frame(top, bg=BORDER, width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12)
+        tk.Label(top, text="BELLMOUNTH INSPECTION SYSTEM", bg=PANEL, fg=ACCENT,
+                font=("Arial", 13)).pack(side=tk.LEFT, padx=0)
 
-        tk.Button(top, text="⏻ QUIT", command=self.root.destroy,
-                 bg=RED, fg="white", font=("Arial", 9, "bold"),
-                 relief=tk.FLAT, bd=0, padx=15, pady=5).pack(side=tk.RIGHT, padx=20, pady=12)
+        tk.Frame(top, bg=PANEL).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # Main content
+        tk.Label(top, text="●", bg=PANEL, fg=RED, font=("Arial", 10)).pack(side=tk.LEFT, padx=(0, 4))
+        tk.Label(top, text="LIVE", bg=PANEL, fg=TEXT2, font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 20))
+        tk.Frame(top, bg=BORDER, width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12)
+        tk.Label(top, text=self.machine_name, bg=PANEL, fg=TEXT, font=("Arial", 10)).pack(side=tk.LEFT, padx=12)
+        tk.Frame(top, bg=BORDER, width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12)
+        self.clock_lbl = tk.Label(top, text="--:--:--", bg=PANEL, fg=TEXT2, font=("Consolas", 10))
+        self.clock_lbl.pack(side=tk.LEFT, padx=12)
+        tk.Frame(top, bg=BORDER, width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12)
+        tk.Button(top, text="QUIT", command=self.root.destroy,
+                 bg=RED, fg=TEXT, font=("Arial", 9, "bold"),
+                 relief=tk.FLAT, bd=0, padx=18, activebackground=RED,
+                 activeforeground=TEXT).pack(side=tk.LEFT, padx=20, pady=12)
+
+        # Content area
         content = tk.Frame(self.root, bg=BG)
         content.pack(fill=tk.BOTH, expand=True)
 
-        # Left: Camera
-        self.canvas = tk.Canvas(content, bg="black", width=900, height=600)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Canvas + border
+        canvas_outer = tk.Frame(content, bg=BORDER)
+        canvas_outer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=8)
+        self.canvas = tk.Canvas(canvas_outer, bg="#080810", relief=tk.FLAT, bd=0)
+        self.canvas.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
         self.canvas.bind("<MouseWheel>", self._on_scroll)
         self.canvas.bind("<Button-1>", self._on_press)
         self.canvas.bind("<B1-Motion>", self._on_move)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
 
-        # Right: Controls
-        right = tk.Frame(content, bg=SURFACE, width=350)
-        right.pack(side=tk.RIGHT, fill=tk.BOTH, padx=10, pady=10)
+        # Right panel
+        right = tk.Frame(content, bg=PANEL, width=330)
+        right.pack(side=tk.RIGHT, fill=tk.BOTH, padx=10, pady=8)
         right.pack_propagate(False)
 
-        self._build_right_panel(right)
-
-        # Bottom: Status bar
-        bottom = tk.Frame(self.root, bg=SURFACE, height=40)
-        bottom.pack(fill=tk.X, side=tk.BOTTOM)
-        bottom.pack_propagate(False)
-
-        self.zoom_lbl = tk.Label(bottom, text="Zoom: --x", bg=SURFACE, fg=TEXT, font=("Arial", 9))
-        self.zoom_lbl.pack(side=tk.LEFT, padx=20, pady=10)
-
-        self.mpp_lbl = tk.Label(bottom, text="-- mm/px", bg=SURFACE, fg=TEXT, font=("Arial", 9))
-        self.mpp_lbl.pack(side=tk.LEFT, padx=20, pady=10)
-
-        self.cable_lbl = tk.Label(bottom, text="●Cable: --", bg=SURFACE, fg=MUTED, font=("Arial", 9))
-        self.cable_lbl.pack(side=tk.LEFT, padx=20, pady=10)
-
-    def _build_right_panel(self, parent):
-        """Build right control panel"""
-        # Mode selector
-        mode_frm = tk.LabelFrame(parent, text="MODE", bg=CARD, fg=TEXT,
-                                font=("Arial", 9, "bold"), padx=10, pady=10)
-        mode_frm.pack(fill=tk.X, padx=10, pady=10)
-
-        btn_frame = tk.Frame(mode_frm, bg=CARD)
-        btn_frame.pack(fill=tk.X)
-
-        tk.Button(btn_frame, text="AUTO CNN", command=lambda: self._set_mode("AUTO"),
-                 bg=ACCENT, fg="white", font=("Arial", 9, "bold"),
-                 relief=tk.FLAT, bd=0, padx=15, pady=6,
-                 width=12).pack(side=tk.LEFT, padx=3)
-        tk.Button(btn_frame, text="MANUAL", command=lambda: self._set_mode("MANUAL"),
-                 bg=MUTED, fg="white", font=("Arial", 9, "bold"),
-                 relief=tk.FLAT, bd=0, padx=15, pady=6,
-                 width=12).pack(side=tk.LEFT, padx=3)
-
-        self.mode_btns = {"AUTO": btn_frame.winfo_children()[0],
-                         "MANUAL": btn_frame.winfo_children()[1]}
-
-        # Measurement display
-        meas_frm = tk.LabelFrame(parent, text="MEASUREMENT", bg=CARD, fg=TEXT,
-                               font=("Arial", 9, "bold"), padx=10, pady=10)
-        meas_frm.pack(fill=tk.X, padx=10, pady=10)
-
-        self.dist_lbl = tk.Label(meas_frm, text="-- mm", bg=CARD, fg=GREEN,
-                                font=("Arial", 32, "bold"))
+        # Measurement card
+        body = self._card(right, "MEASUREMENT")
+        self.dist_lbl = tk.Label(body, text="--", bg=CARD, fg=ACCENT,
+                                font=("Consolas", 38, "bold"))
         self.dist_lbl.pack()
+        tk.Label(body, text="mm", bg=CARD, fg=TEXT2, font=("Arial", 11)).pack()
+        tk.Frame(body, bg=SEP, height=1).pack(fill=tk.X, pady=8)
 
-        coords_frm = tk.Frame(meas_frm, bg=CARD)
-        coords_frm.pack(fill=tk.X, pady=5)
-        self.p1_lbl = tk.Label(coords_frm, text="P1: --", bg=CARD, fg=TEXT, font=("Arial", 8))
-        self.p1_lbl.pack(side=tk.LEFT, padx=5)
-        self.p2_lbl = tk.Label(coords_frm, text="P2: --", bg=CARD, fg=TEXT, font=("Arial", 8))
-        self.p2_lbl.pack(side=tk.LEFT, padx=5)
+        grid = tk.Frame(body, bg=CARD)
+        grid.pack(fill=tk.X)
+        lc = tk.Frame(grid, bg=CARD)
+        lc.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Label(lc, text="ZOOM", bg=CARD, fg=TEXT2, font=("Arial", 8, "bold")).pack(anchor=tk.W)
+        self.zoom_val = tk.Label(lc, text="--", bg=CARD, fg=TEXT, font=("Consolas", 12))
+        self.zoom_val.pack(anchor=tk.W)
+        rc = tk.Frame(grid, bg=CARD)
+        rc.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Label(rc, text="MM / PX", bg=CARD, fg=TEXT2, font=("Arial", 8, "bold")).pack(anchor=tk.W)
+        self.mpp_val = tk.Label(rc, text="--", bg=CARD, fg=TEXT, font=("Consolas", 12))
+        self.mpp_val.pack(anchor=tk.W)
 
-        # Capture button
-        self.capture_btn = tk.Button(parent, text="📸 CAPTURE",
-                                    command=self._on_capture,
-                                    bg=ACCENT, fg="white", font=("Arial", 11, "bold"),
-                                    relief=tk.FLAT, bd=0, padx=20, pady=10)
-        self.capture_btn.pack(fill=tk.X, padx=10, pady=10)
+        tk.Frame(body, bg=SEP, height=1).pack(fill=tk.X, pady=8)
+        coords = tk.Frame(body, bg=CARD)
+        coords.pack(fill=tk.X)
+        self.p1_lbl = tk.Label(coords, text="P1  --", bg=CARD, fg=TEXT2, font=("Consolas", 9))
+        self.p1_lbl.pack(side=tk.LEFT)
+        self.p2_lbl = tk.Label(coords, text="P2  --", bg=CARD, fg=TEXT2, font=("Consolas", 9))
+        self.p2_lbl.pack(side=tk.RIGHT)
 
-        # Save annotation
-        save_frm = tk.LabelFrame(parent, text="SAVE", bg=CARD, fg=TEXT,
-                               font=("Arial", 9, "bold"), padx=10, pady=10)
-        save_frm.pack(fill=tk.X, padx=10, pady=10)
+        # Status card
+        body = self._card(right, "STATUS")
+        row = tk.Frame(body, bg=CARD)
+        row.pack(fill=tk.X)
+        self.cable_dot = tk.Label(row, text="●", bg=CARD, fg=TEXT2, font=("Arial", 12))
+        self.cable_dot.pack(side=tk.LEFT)
+        self.cable_lbl = tk.Label(row, text="CABLE --", bg=CARD, fg=TEXT2,
+                                 font=("Arial", 9, "bold"))
+        self.cable_lbl.pack(side=tk.LEFT, padx=(4, 20))
+        tk.Label(row, text="●", bg=CARD, fg=GREEN, font=("Arial", 12)).pack(side=tk.LEFT)
+        tk.Label(row, text="CAMERA OK", bg=CARD, fg=TEXT2, font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=4)
 
-        self.save_btn = tk.Button(save_frm, text="💾 Save Annotation",
-                                 command=self._save_annotation,
-                                 bg=YELLOW, fg="black", font=("Arial", 9, "bold"),
-                                 relief=tk.FLAT, bd=0, padx=15, pady=8, state=tk.DISABLED)
+        # Mode card
+        body = self._card(right, "ANALYSIS MODE")
+        row = tk.Frame(body, bg=CARD)
+        row.pack(fill=tk.X)
+        self.btn_auto = tk.Button(row, text="AUTO CNN", command=lambda: self._set_mode("AUTO"),
+                                 bg=BTN, fg=TEXT, font=("Arial", 9, "bold"),
+                                 relief=tk.FLAT, bd=0, pady=8, width=12)
+        self.btn_auto.pack(side=tk.LEFT, padx=(0, 4))
+        self.btn_manual = tk.Button(row, text="MANUAL", command=lambda: self._set_mode("MANUAL"),
+                                   bg=SEP, fg=TEXT2, font=("Arial", 9, "bold"),
+                                   relief=tk.FLAT, bd=0, pady=8, width=12)
+        self.btn_manual.pack(side=tk.LEFT)
+        self.mode_btns = {"AUTO": self.btn_auto, "MANUAL": self.btn_manual}
+
+        # Actions card
+        body = self._card(right, "ACTIONS")
+        self.capture_btn = tk.Button(body, text="CAPTURE", command=self._on_capture,
+                                    bg=BTN, fg=TEXT, font=("Arial", 11, "bold"),
+                                    relief=tk.FLAT, bd=0, pady=12)
+        self.capture_btn.pack(fill=tk.X, pady=(0, 6))
+        self.save_btn = tk.Button(body, text="SAVE ANNOTATION", command=self._save_annotation,
+                                 bg=AMBER, fg="#1A1000", font=("Arial", 10, "bold"),
+                                 relief=tk.FLAT, bd=0, pady=10, state=tk.DISABLED)
         self.save_btn.pack(fill=tk.X)
+        self.dataset_lbl = tk.Label(body, text=f"{self.annotation_count} samples",
+                                   bg=CARD, fg=TEXT2, font=("Arial", 8))
+        self.dataset_lbl.pack(anchor=tk.E, pady=(4, 0))
 
-        self.dataset_lbl = tk.Label(save_frm, text=f"Dataset: {self.annotation_count} items",
-                                   bg=CARD, fg=TEXT, font=("Arial", 8))
-        self.dataset_lbl.pack(pady=5)
-
-        # LED Control
-        led_frm = tk.LabelFrame(parent, text="LED CONTROL", bg=CARD, fg=TEXT,
-                              font=("Arial", 9, "bold"), padx=10, pady=10)
-        led_frm.pack(fill=tk.X, padx=10, pady=10)
-
-        btn_frm = tk.Frame(led_frm, bg=CARD)
-        btn_frm.pack(fill=tk.X)
-        tk.Button(btn_frm, text="ON", command=self._led_on,
-                 bg=GREEN, fg="black", font=("Arial", 9, "bold"),
-                 relief=tk.FLAT, bd=0, padx=15, pady=6, width=8).pack(side=tk.LEFT, padx=3)
-        tk.Button(btn_frm, text="OFF", command=self._led_off,
-                 bg=RED, fg="white", font=("Arial", 9, "bold"),
-                 relief=tk.FLAT, bd=0, padx=15, pady=6, width=8).pack(side=tk.LEFT, padx=3)
-
-        tk.Label(led_frm, text="Brightness:", bg=CARD, fg=TEXT, font=("Arial", 8)).pack(anchor=tk.W, pady=(10, 5))
-        self.led_slider = tk.Scale(led_frm, from_=1, to=6, orient=tk.HORIZONTAL,
-                                  bg=SURFACE, fg=TEXT, highlightthickness=0,
-                                  troughcolor=CARD, command=self._set_brightness)
+        # LED card
+        body = self._card(right, "ILLUMINATION")
+        row = tk.Frame(body, bg=CARD)
+        row.pack(fill=tk.X, pady=(0, 8))
+        tk.Button(row, text="LED  ON", command=self._led_on,
+                 bg=GREEN, fg="#001A00", font=("Arial", 9, "bold"),
+                 relief=tk.FLAT, bd=0, pady=8).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+        tk.Button(row, text="LED  OFF", command=self._led_off,
+                 bg=SEP, fg=TEXT, font=("Arial", 9, "bold"),
+                 relief=tk.FLAT, bd=0, pady=8).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Label(body, text="BRIGHTNESS", bg=CARD, fg=TEXT2, font=("Arial", 8, "bold")).pack(anchor=tk.W)
+        self.led_slider = tk.Scale(body, from_=1, to=6, orient=tk.HORIZONTAL,
+                                  bg=CARD, fg=TEXT, highlightthickness=0, troughcolor=SEP,
+                                  activebackground=BTN, sliderlength=18,
+                                  command=self._set_brightness)
         self.led_slider.set(3)
         self.led_slider.pack(fill=tk.X)
 
+        # Bottom status bar
+        bottom = tk.Frame(self.root, bg=PANEL, height=30)
+        bottom.pack(fill=tk.X, side=tk.BOTTOM)
+        bottom.pack_propagate(False)
+        tk.Frame(bottom, bg=SEP, height=1).pack(fill=tk.X)
+        tk.Label(bottom, text="YAZAKI INSPECTION SYSTEM  v1.0", bg=PANEL, fg=TEXT2,
+                font=("Arial", 8)).pack(side=tk.LEFT, padx=20, pady=7)
+
     def _set_mode(self, mode):
         self.mode = mode
-        for m, btn in self.mode_btns.items():
-            btn.config(bg=ACCENT if m == mode else MUTED)
-
-        self.p1 = None
-        self.p2 = None
-        self.dist_mm = None
+        self.mode_btns["AUTO"].config(bg=BTN if mode=="AUTO" else SEP,
+                                      fg=TEXT if mode=="AUTO" else TEXT2)
+        self.mode_btns["MANUAL"].config(bg=BTN if mode=="MANUAL" else SEP,
+                                        fg=TEXT if mode=="MANUAL" else TEXT2)
+        self.p1 = self.p2 = self.dist_mm = None
         self._update_display()
 
     def _on_scroll(self, event):
@@ -462,7 +486,7 @@ class MainApp:
         tmp.replace(ANNOTATIONS_FILE)
 
         self.annotation_count += 1
-        self.dataset_lbl.config(text=f"Dataset: {self.annotation_count} items")
+        self.dataset_lbl.config(text=f"{self.annotation_count} samples")
 
     def _led_on(self):
         try:
@@ -487,6 +511,10 @@ class MainApp:
             return len(json.loads(ANNOTATIONS_FILE.read_text() or "[]"))
         return 0
 
+    def _update_clock(self):
+        self.clock_lbl.config(text=datetime.now().strftime("%H:%M:%S"))
+        self.root.after(1000, self._update_clock)
+
     def _update_display(self):
         if self.current_frame is None:
             return
@@ -494,7 +522,6 @@ class MainApp:
         disp = self.current_frame.copy()
         h, w = disp.shape[:2]
 
-        # Apply zoom/pan
         if self.zoom > 1:
             new_w = int(w / self.zoom)
             new_h = int(h / self.zoom)
@@ -507,23 +534,45 @@ class MainApp:
             disp = disp[y1:y2, x1:x2]
             disp = cv2.resize(disp, (w, h))
 
-        # Draw cable detection
-        if cable_detector.stable_status == "Cable IN":
-            cv2.putText(disp, cable_detector.stable_status, (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        else:
-            cv2.putText(disp, cable_detector.stable_status, (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        # Cable status
+        status_color = (0, 255, 0) if cable_detector.stable_status == "Cable IN" else (0, 0, 255)
+        cv2.putText(disp, cable_detector.stable_status, (10, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
 
-        # Draw points
+        # Draw points and line
         if self.p1:
-            cv2.circle(disp, self.p1, 8, (0, 255, 0), -1)
+            cv2.circle(disp, self.p1, 16, (0, 191, 255), 2)
+            cv2.circle(disp, self.p1, 5, (255, 255, 255), -1)
         if self.p2:
-            cv2.circle(disp, self.p2, 8, (0, 255, 0), -1)
+            cv2.circle(disp, self.p2, 16, (0, 191, 255), 2)
+            cv2.circle(disp, self.p2, 5, (255, 255, 255), -1)
         if self.p1 and self.p2:
-            cv2.line(disp, self.p1, self.p2, (0, 255, 255), 2)
+            dx, dy = self.p2[0]-self.p1[0], self.p2[1]-self.p1[1]
+            dist = int(math.hypot(dx, dy))
+            for i in range(0, dist, 16):
+                t0 = i/dist if dist > 0 else 0
+                t1 = min((i+10)/dist, 1.0) if dist > 0 else 1.0
+                s = (int(self.p1[0]+t0*dx), int(self.p1[1]+t0*dy))
+                e = (int(self.p1[0]+t1*dx), int(self.p1[1]+t1*dy))
+                cv2.line(disp, s, e, (0, 191, 255), 2)
 
-        # Convert & display
+            if self.dist_mm is not None:
+                mid = ((self.p1[0]+self.p2[0])//2, (self.p1[1]+self.p2[1])//2)
+                txt = f"{self.dist_mm:.2f} mm"
+                (tw, th), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                cv2.rectangle(disp, (mid[0]-tw//2-6, mid[1]-th-8),
+                             (mid[0]+tw//2+6, mid[1]+4), (0, 0, 0), -1)
+                cv2.putText(disp, txt, (mid[0]-tw//2, mid[1]),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 191, 255), 2)
+
+        # Manual mode hint
+        if self.mode == "MANUAL":
+            hint = "CLICK TO PLACE P1" if self.p1 is None else ("CLICK TO PLACE P2" if self.p2 is None else "")
+            if hint:
+                cv2.rectangle(disp, (0, h-36), (len(hint)*9+20, h), (0, 0, 0), -1)
+                cv2.putText(disp, hint, (10, h-12), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 191, 255), 2)
+
+        # Display on canvas
         rgb = cv2.cvtColor(disp, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(rgb)
         imgtk = ImageTk.PhotoImage(img)
@@ -532,15 +581,15 @@ class MainApp:
 
         # Update labels
         if self.p1:
-            self.p1_lbl.config(text=f"P1: {self.p1}")
+            self.p1_lbl.config(text=f"P1  ({self.p1[0]}, {self.p1[1]})")
         if self.p2:
-            self.p2_lbl.config(text=f"P2: {self.p2}")
+            self.p2_lbl.config(text=f"P2  ({self.p2[0]}, {self.p2[1]})")
         if self.dist_mm is not None:
-            self.dist_lbl.config(text=f"{self.dist_mm:.2f} mm")
-            self.save_btn.config(state=tk.NORMAL)
+            self.dist_lbl.config(text=f"{self.dist_mm:.2f}")
+            self.save_btn.config(state=tk.NORMAL, bg=AMBER, fg="#1A1000")
         else:
-            self.dist_lbl.config(text="-- mm")
-            self.save_btn.config(state=tk.DISABLED)
+            self.dist_lbl.config(text="--")
+            self.save_btn.config(state=tk.DISABLED, bg=SEP, fg=TEXT2)
 
     def _start_loop(self):
         if not self.camera_ok:
@@ -549,19 +598,19 @@ class MainApp:
         ret, frame = self.cap.read()
         if ret:
             self.current_frame = frame.copy()
-            frame = detect_cable(frame)
+            detect_cable(frame)
             self._update_display()
 
-            # Update status bar
             self.pixel_measure.update()
             zoom, mpp = self.pixel_measure.get_values()
             if zoom:
-                self.zoom_lbl.config(text=f"Zoom: {zoom:.2f}x")
+                self.zoom_val.config(text=f"{zoom:.2f}x")
             if mpp:
-                self.mpp_lbl.config(text=f"{mpp:.4f} mm/px")
+                self.mpp_val.config(text=f"{mpp:.5f}")
 
-            color = GREEN if cable_detector.stable_status == "Cable IN" else MUTED
-            self.cable_lbl.config(text=f"●{cable_detector.stable_status}", fg=color)
+            color = GREEN if cable_detector.stable_status == "Cable IN" else RED
+            self.cable_dot.config(fg=color)
+            self.cable_lbl.config(text=cable_detector.stable_status, fg=color)
 
         self.root.after(10, self._start_loop)
 
