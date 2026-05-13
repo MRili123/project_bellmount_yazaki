@@ -385,31 +385,25 @@ class MainApp:
             canvas_h = self.canvas.winfo_height()
 
             if canvas_w > 1 and canvas_h > 1:
-                # Calculate actual displayed frame dimensions (considering zoom/pan)
+                # Simple direct mapping: click position in canvas → frame position
+                # accounting for any zoom/pan
                 if self.zoom > 1:
-                    # When zoomed, the displayed portion is a crop
                     new_w = int(w / self.zoom)
                     new_h = int(h / self.zoom)
                     cx = w // 2 + self.pan_x
                     cy = h // 2 + self.pan_y
-                    crop_x1 = max(0, cx - new_w // 2)
-                    crop_y1 = max(0, cy - new_h // 2)
-                    crop_x2 = min(w, cx + new_w // 2)
-                    crop_y2 = min(h, cy + new_h // 2)
-                    disp_w = crop_x2 - crop_x1
-                    disp_h = crop_y2 - crop_y1
+                    x1 = max(0, cx - new_w // 2)
+                    y1 = max(0, cy - new_h // 2)
+                    x2 = min(w, cx + new_w // 2)
+                    y2 = min(h, cy + new_h // 2)
 
-                    # Scale canvas click to cropped region
-                    x_in_crop = int(event.x * disp_w / canvas_w)
-                    y_in_crop = int(event.y * disp_h / canvas_h)
-
-                    # Map back to full frame
-                    x = crop_x1 + x_in_crop
-                    y = crop_y1 + y_in_crop
+                    # Map canvas click directly to frame coordinates
+                    x = int(x1 + (event.x / canvas_w) * (x2 - x1))
+                    y = int(y1 + (event.y / canvas_h) * (y2 - y1))
                 else:
-                    # No zoom: simple proportional mapping
-                    x = int(event.x * w / canvas_w)
-                    y = int(event.y * h / canvas_h)
+                    # No zoom: direct proportional mapping
+                    x = int(event.x / canvas_w * w)
+                    y = int(event.y / canvas_h * h)
 
                 # Clamp to frame bounds
                 x = max(0, min(x, w - 1))
@@ -417,10 +411,8 @@ class MainApp:
 
                 if self.p1 is None:
                     self.p1 = (x, y)
-                    print(f"P1 set: ({x}, {y})")
                 elif self.p2 is None:
                     self.p2 = (x, y)
-                    print(f"P2 set: ({x}, {y})")
                     self._compute_distance()
         else:
             self.drag_start = (event.x, event.y)
@@ -604,7 +596,13 @@ class MainApp:
                 cv2.rectangle(disp, (0, h-36), (len(hint)*9+20, h), (0, 0, 0), -1)
                 cv2.putText(disp, hint, (10, h-12), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 191, 255), 2)
 
-        # Display on canvas
+        # Display on canvas - resize to match canvas dimensions
+        canvas_w = self.canvas.winfo_width()
+        canvas_h = self.canvas.winfo_height()
+
+        if canvas_w > 1 and canvas_h > 1:
+            disp = cv2.resize(disp, (canvas_w, canvas_h))
+
         rgb = cv2.cvtColor(disp, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(rgb)
         imgtk = ImageTk.PhotoImage(img)
