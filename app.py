@@ -42,14 +42,13 @@ current_frame = None
 match_score = 0
 camera_status = "Camera not loaded"
 
-# --------- Auto-capture + inference state ---------
+# --------- Scan + inference state ---------
 _tf_model = None
 _cable_in_start = None
 _auto_triggered = False
-_result_overlay = None
 _result_window = None
+_is_scanning = False
 CABLE_IN_REQUIRED = 5.0
-OVERLAY_DURATION = 8.0
 MODEL_PATH = os.path.join(os.path.dirname(__file__),
     "model_bellmounth_mesure", "model", "CNN_BELMOUNTH_MODEL_V1.h5")
 
@@ -228,34 +227,69 @@ label.bind("<B1-Motion>", inter.mouse_move)
 label.bind("<ButtonRelease-1>", inter.mouse_up)
 label.bind("<MouseWheel>", inter.mouse_scroll)
 
-# ---------------- Screenshot button ----------------
-def take_screenshot():
-    global current_frame
+# ---------------- Scan Control Buttons ----------------
+def start_scan():
+    global _is_scanning, _cable_in_start, _auto_triggered
+    _is_scanning = True
+    _cable_in_start = None
+    _auto_triggered = False
+    btn_start.config(state=tk.DISABLED, bg="#555555")
+    btn_stop.config(state=tk.NORMAL, bg="#FF5722")
+    status_label.config(text="Status: SCANNING", fg="#3DDB7E")
 
-    if current_frame is None:
-        return
+def stop_scan():
+    global _is_scanning, _cable_in_start, _auto_triggered
+    _is_scanning = False
+    _cable_in_start = None
+    _auto_triggered = False
+    btn_start.config(state=tk.NORMAL, bg="#FF5722")
+    btn_stop.config(state=tk.DISABLED, bg="#555555")
+    status_label.config(text="Status: IDLE", fg="#FFA500")
 
-    # Only update zoom / mm when taking screenshot
-    pixel_measure.update()
-    zoom, mm_per_pixel = pixel_measure.get_values()
+# Button frame
+btn_frame = tk.Frame(root, bg="#2b2b2b")
+btn_frame.pack(pady=10)
 
-    save_screenshot(current_frame, zoom, mm_per_pixel)
-
-btn_screenshot = tk.Button(
-    root,
-    text="Take Screenshot",
-    command=take_screenshot,
+btn_start = tk.Button(
+    btn_frame,
+    text="▶ Start Scan",
+    command=start_scan,
     bg="#FF5722",
     fg="white",
     font=("Arial", 11, "bold"),
-    padx=10,
-    pady=5
+    padx=15,
+    pady=5,
+    width=12
 )
-btn_screenshot.pack(pady=5)
+btn_start.pack(side=tk.LEFT, padx=5)
+
+btn_stop = tk.Button(
+    btn_frame,
+    text="⏹ Stop Scan",
+    command=stop_scan,
+    bg="#555555",
+    fg="white",
+    font=("Arial", 11, "bold"),
+    padx=15,
+    pady=5,
+    width=12,
+    state=tk.DISABLED
+)
+btn_stop.pack(side=tk.LEFT, padx=5)
+
+# Status label
+status_label = tk.Label(
+    root,
+    text="Status: IDLE",
+    bg="#2b2b2b",
+    fg="#FFA500",
+    font=("Arial", 10, "bold")
+)
+status_label.pack()
 
 # ---------------- Update Frame Function ----------------
 def update_frame():
-    global current_frame, match_score, _cable_in_start, _auto_triggered, _result_window
+    global current_frame, match_score, _cable_in_start, _auto_triggered, _result_window, _is_scanning
 
     ret, frame = cap.read()
     if ret:
@@ -280,16 +314,20 @@ def update_frame():
         # ---------------- Cable detection ----------------
         frame = detect_cable(frame)
 
-        # -------- 5-second auto-trigger for inference --------
-        if cable_detector.stable_status == "Cable IN":
-            if _cable_in_start is None:
-                _cable_in_start = time.time()
-            elif not _auto_triggered and (time.time() - _cable_in_start) >= CABLE_IN_REQUIRED:
-                _auto_triggered = True
-                result = run_inference(current_frame)
-                if result:
-                    p1, p2, dist_mm = result
-                    show_result_window(current_frame, p1, p2, dist_mm)
+        # -------- 5-second scan trigger (only when scanning) --------
+        if _is_scanning:
+            if cable_detector.stable_status == "Cable IN":
+                if _cable_in_start is None:
+                    _cable_in_start = time.time()
+                elif not _auto_triggered and (time.time() - _cable_in_start) >= CABLE_IN_REQUIRED:
+                    _auto_triggered = True
+                    result = run_inference(current_frame)
+                    if result:
+                        p1, p2, dist_mm = result
+                        show_result_window(current_frame, p1, p2, dist_mm)
+            else:
+                _cable_in_start = None
+                _auto_triggered = False
         else:
             _cable_in_start = None
             _auto_triggered = False
