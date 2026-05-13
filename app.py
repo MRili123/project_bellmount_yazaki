@@ -5,11 +5,25 @@ import tkinter as tk
 from PIL import Image, ImageTk
 from datetime import datetime
 import os
+import time
+import math
+import sys
+import numpy as np
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "model_bellmounth_mesure"))
+from utils import apply_threshold
 
 from camera_setup import get_camera
 import interaction_setup as inter
+import cable_detector
 from cable_detector import detect_cable
 from handle_screenshot import save_screenshot
+
+try:
+    import tensorflow as tf
+    _TF_AVAILABLE = True
+except ImportError:
+    _TF_AVAILABLE = False
 
 # Initialize Dino-Lite SDK (used only on screenshot)
 pixel_measure = PixelMeasure()
@@ -22,6 +36,56 @@ if cap is None:
 current_frame = None
 match_score = 0
 camera_status = "Camera not loaded"
+
+# --------- Auto-capture + inference state ---------
+_tf_model = None
+_cable_in_start = None
+_auto_triggered = False
+_result_overlay = None
+CABLE_IN_REQUIRED = 5.0
+OVERLAY_DURATION = 8.0
+MODEL_PATH = os.path.join(os.path.dirname(__file__),
+    "model_bellmounth_mesure", "model", "CNN_BELMOUNTH_MODEL_V1.h5")
+
+def load_model_once():
+    global _tf_model
+    if _tf_model is None and _TF_AVAILABLE:
+        try:
+            _tf_model = tf.keras.models.load_model(MODEL_PATH)
+        except Exception as e:
+            print(f"Model load error: {e}")
+    return _tf_model
+
+def run_inference(frame):
+    model = load_model_once()
+    if model is None:
+        return None
+
+    h, w = frame.shape[:2]
+
+    try:
+        # Preprocess: threshold -> resize -> normalize -> add channel dim
+        thresh = apply_threshold(frame)
+        resized = cv2.resize(thresh, (640, 480))
+        normalized = resized.astype(np.float32) / 255.0
+        inp = normalized[..., np.newaxis][np.newaxis, ...]  # (1, 480, 640, 1)
+
+        pred = model.predict(inp, verbose=0)[0]
+
+        # Denormalize to pixel coords
+        p1 = (int(pred[0] * w), int(pred[1] * h))
+        p2 = (int(pred[2] * w), int(pred[3] * h))
+        pixel_dist = math.dist(p1, p2)
+
+        # Get real distance from SDK
+        pixel_measure.update()
+        _, mm_pp = pixel_measure.get_values()
+        dist_mm = pixel_dist * mm_pp if mm_pp else None
+
+        return p1, p2, dist_mm
+    except Exception as e:
+        print(f"Inference error: {e}")
+        return None
 
 # ---------------- GUI setup ----------------
 root = tk.Tk()
@@ -64,7 +128,7 @@ btn_screenshot.pack(pady=5)
 
 # ---------------- Update Frame Function ----------------
 def update_frame():
-    global current_frame, match_score
+    global current_frame, match_score, _cable_in_start, _auto_triggered, _result_overlay
 
     ret, frame = cap.read()
     if ret:
@@ -88,6 +152,33 @@ def update_frame():
 
         # ---------------- Cable detection ----------------
         frame = detect_cable(frame)
+
+        # -------- 5-second auto-trigger for inference --------
+        if cable_detector.stable_status == "Cable IN":
+            if _cable_in_start is None:
+                _cable_in_start = time.time()
+            elif not _auto_triggered and (time.time() - _cable_in_start) >= CABLE_IN_REQUIRED:
+                _auto_triggered = True
+                result = run_inference(current_frame)
+                if result:
+                    p1, p2, dist_mm = result
+                    _result_overlay = (p1, p2, dist_mm, time.time() + OVERLAY_DURATION)
+        else:
+            _cable_in_start = None
+            _auto_triggered = False
+
+        # -------- Draw inference results overlay --------
+        if _result_overlay:
+            p1, p2, dist_mm, expire = _result_overlay
+            if time.time() < expire:
+                cv2.circle(frame, p1, 8, (0, 255, 0), -1)
+                cv2.circle(frame, p2, 8, (0, 255, 0), -1)
+                cv2.line(frame, p1, p2, (0, 255, 255), 2)
+                label_text = f"{dist_mm:.2f} mm" if dist_mm else "SDK unavailable"
+                mid = ((p1[0] + p2[0]) // 2, (p1[1] + p2[1]) // 2 - 15)
+                cv2.putText(frame, label_text, mid, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            else:
+                _result_overlay = None
 
         # ---------------- Display ----------------
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
