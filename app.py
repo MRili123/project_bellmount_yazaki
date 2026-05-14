@@ -101,7 +101,7 @@ class LoginWindow:
         if logo_path.exists():
             try:
                 logo_img = Image.open(str(logo_path))
-                logo_img = logo_img.resize((250, 72), Image.Resampling.LANCZOS)
+                logo_img = logo_img.resize((250, 90), Image.Resampling.LANCZOS)
                 logo_photo = ImageTk.PhotoImage(logo_img)
                 logo_label = tk.Label(logo_frame, image=logo_photo, bg=self.LOGIN_BG)
                 logo_label.image = logo_photo
@@ -281,7 +281,7 @@ class MainApp:
         if logo_path.exists():
             try:
                 logo_img = Image.open(str(logo_path))
-                logo_img = logo_img.resize((135, 40), Image.Resampling.LANCZOS)
+                logo_img = logo_img.resize((135, 48), Image.Resampling.LANCZOS)
                 logo_photo = ImageTk.PhotoImage(logo_img)
                 logo_label = tk.Label(top, image=logo_photo, bg=PANEL)
                 logo_label.image = logo_photo
