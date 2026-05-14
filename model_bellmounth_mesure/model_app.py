@@ -997,9 +997,10 @@ class AnnotationCanvas(QLabel):
 
         self._orig_image = None
         self._thresh_image = None
+        self._threads_image = None  # 640x480 preprocessed version
         self._points = []
         self._replace_mode = "nearest"
-        self._show_gray = False
+        self._display_mode = "original"  # "original", "threshold", "threads"
 
         self._zoom = 1.0
         self._offset = QPointF(0, 0)
@@ -1014,6 +1015,8 @@ class AnnotationCanvas(QLabel):
     def load_image(self, bgr: np.ndarray):
         self._orig_image = bgr
         self._thresh_image = apply_threshold(bgr)
+        # Model preprocessing: resize to 640x480 for training
+        self._threads_image = cv2.resize(self._thresh_image, (640, 480))
         self._points = []
         self._zoom = 1.0
         self._offset = QPointF(0, 0)
@@ -1026,8 +1029,10 @@ class AnnotationCanvas(QLabel):
     def set_replace_mode(self, mode: str):
         self._replace_mode = mode
 
-    def set_preview_mode(self, show_gray: bool):
-        self._show_gray = show_gray
+    def set_preview_mode(self, mode: str):
+        """Set display mode: 'original', 'threshold', 'threads' (640x480)"""
+        self._display_mode = mode
+        self._redraw()
 
     def get_points(self):
         return list(self._points)
@@ -1040,9 +1045,12 @@ class AnnotationCanvas(QLabel):
         if self._thresh_image is None:
             return
 
-        if self._show_gray and self._orig_image is not None:
-            base_img = cv2.cvtColor(self._orig_image, cv2.COLOR_BGR2GRAY)
-        else:
+        # Select image based on display mode
+        if self._display_mode == "original":
+            base_img = cv2.cvtColor(self._orig_image, cv2.COLOR_BGR2GRAY) if self._orig_image is not None else self._thresh_image
+        elif self._display_mode == "threads":
+            base_img = self._threads_image if self._threads_image is not None else self._thresh_image
+        else:  # "threshold"
             base_img = self._thresh_image
 
         oh, ow = base_img.shape[:2]
@@ -1064,10 +1072,19 @@ class AnnotationCanvas(QLabel):
         labels_txt = ["P1", "P2"]
         r = max(5, int(7 * min(self._zoom, 2)))
 
+        # Calculate point coordinate conversion based on display mode
+        orig_h, orig_w = self._orig_image.shape[:2] if self._orig_image is not None else (480, 640)
         sx_pts = []
         for i, (ox, oy) in enumerate(self._points[:2]):
-            sx = int(ox * scale)
-            sy = int(oy * scale)
+            # Convert from original space to display space
+            if self._display_mode == "threads":
+                # Scale point from original to 640x480 space
+                px = int(ox * 640 / orig_w)
+                py = int(oy * 480 / orig_h)
+            else:
+                px, py = ox, oy
+            sx = int(px * scale)
+            sy = int(py * scale)
             sx_pts.append((sx, sy))
             painter.setPen(QPen(colors[i], 2))
             painter.setBrush(QBrush(colors[i]))
@@ -1096,16 +1113,39 @@ class AnnotationCanvas(QLabel):
     def _canvas_to_orig(self, cx, cy):
         if self._thresh_image is None:
             return None, None
-        oh, ow = self._thresh_image.shape[:2]
+
+        # Get dimensions of currently displayed image
+        if self._display_mode == "threads":
+            disp_h, disp_w = 480, 640
+        elif self._display_mode == "original":
+            disp_h, disp_w = self._orig_image.shape[:2] if self._orig_image is not None else self._thresh_image.shape[:2]
+        else:  # threshold
+            disp_h, disp_w = self._thresh_image.shape[:2]
+
         cw = self.width()
         ch = self.height()
-        scale = min(cw / ow, ch / oh) * self._zoom
+        scale = min(cw / disp_w, ch / disp_h) * self._zoom
         ix = self._img_x
         iy = self._img_y
-        ox = (cx - ix) / scale
-        oy = (cy - iy) / scale
-        if 0 <= ox < ow and 0 <= oy < oh:
-            return int(ox), int(oy)
+        px = (cx - ix) / scale
+        py = (cy - iy) / scale
+
+        # Convert from display space to original space
+        if self._display_mode == "threads":
+            orig_h, orig_w = self._orig_image.shape[:2] if self._orig_image is not None else (480, 640)
+            ox = int(px * orig_w / 640)
+            oy = int(py * orig_h / 480)
+        else:
+            ox, oy = int(px), int(py)
+
+        if 0 <= ox < disp_w and 0 <= oy < disp_h:
+            if self._display_mode != "threads":
+                return int(ox), int(oy)
+            else:
+                # Validate in original space
+                orig_h, orig_w = self._orig_image.shape[:2] if self._orig_image is not None else (480, 640)
+                if 0 <= ox < orig_w and 0 <= oy < orig_h:
+                    return int(ox), int(oy)
         return None, None
 
     def mouseMoveEvent(self, event):
@@ -1185,133 +1225,157 @@ class AnnotationSection(QWidget):
     def _build_ui(self):
         main = QHBoxLayout(self)
         main.setContentsMargins(0, 0, 0, 0)
-        main.setSpacing(0)
+        main.setSpacing(12)
 
+        # ── LEFT PANEL (Canvas) ────────────────────────────────────────────
         left = QWidget()
         left.setStyleSheet(f"background:{C['bg']};")
         llay = QVBoxLayout(left)
-        llay.setContentsMargins(16, 16, 8, 16)
-        llay.setSpacing(8)
+        llay.setContentsMargins(16, 16, 16, 16)
+        llay.setSpacing(12)
 
+        # Header
         hdr = QHBoxLayout()
-        hdr.addWidget(label("⬡  ANNOTATION", C['green'], 13, True))
+        hdr.addWidget(label("◈ ANNOTATION TOOLS", C['accent'], 13, True))
         hdr.addStretch()
-        self._dim_lbl = label("No image", C['muted'], 11)
+        self._mode_lbl = label("Original", C['accent'], 9)
+        hdr.addWidget(self._mode_lbl)
+        self._dim_lbl = label("-- px", C['muted'], 10)
         hdr.addWidget(self._dim_lbl)
         llay.addLayout(hdr)
         llay.addWidget(separator())
 
-        self._coord_lbl = label("X: —  Y: —", C['muted'], 10)
-        llay.addWidget(self._coord_lbl)
+        # Coordinates display
+        coord_box = QVBoxLayout()
+        coord_box.addWidget(label("CURSOR POSITION", C['muted'], 9, True))
+        self._coord_lbl = label("X: —  Y: —", C['accent'], 12, True)
+        coord_box.addWidget(self._coord_lbl)
+        llay.addLayout(coord_box)
 
+        # Canvas with border
+        canvas_frame = QFrame()
+        canvas_frame.setStyleSheet(f"background:{C['border']}; border-radius:4px;")
+        canvas_lay = QVBoxLayout(canvas_frame)
+        canvas_lay.setContentsMargins(1, 1, 1, 1)
         self.canvas = AnnotationCanvas()
         self.canvas.point_placed.connect(self._on_point_placed)
         self.canvas.mouse_moved.connect(self._on_mouse_moved)
-        llay.addWidget(self.canvas, 1)
+        canvas_lay.addWidget(self.canvas)
+        llay.addWidget(canvas_frame, 1)
 
+        # Preview controls with display mode selector
         prev_row = QHBoxLayout()
-        self._preview_chk = QCheckBox("Show original (grayscale)")
-        self._preview_chk.setStyleSheet(f"color:{C['muted']}; font-size:10px;")
-        self._preview_chk.toggled.connect(self._toggle_preview)
-        prev_row.addWidget(self._preview_chk)
+        self._preview_combo = QComboBox()
+        self._preview_combo.addItems(["Original", "Threshold", "Threads 640×480"])
+        self._preview_combo.setStyleSheet(f"""
+            QComboBox {{
+                background:{C['surface']}; border:1px solid {C['border']};
+                color:{C['text']}; padding:4px 6px; font-size:9px; border-radius:3px;
+            }}
+            QComboBox::drop-down {{ border:none; }}
+            QComboBox QAbstractItemView {{ background:{C['panel']}; color:{C['text']}; }}
+        """)
+        self._preview_combo.currentTextChanged.connect(self._on_preview_mode_changed)
+        prev_row.addWidget(self._preview_combo)
         prev_row.addStretch()
-        prev_row.addWidget(label("Scroll to zoom  |  Drag to pan", C['muted'], 10))
+        prev_row.addWidget(label("Scroll: zoom  |  Drag: pan", C['muted'], 9))
         llay.addLayout(prev_row)
         main.addWidget(left, 1)
 
+        # ── RIGHT PANEL (Controls) ──────────────────────────────────────────
         right = QWidget()
-        right.setFixedWidth(260)
-        right.setStyleSheet(f"background:{C['panel']}; border-left:1px solid {C['border']};")
+        right.setFixedWidth(300)
+        right.setStyleSheet(f"background:{C['bg']};")
         rlay = QVBoxLayout(right)
-        rlay.setContentsMargins(14, 16, 14, 16)
+        rlay.setContentsMargins(16, 16, 16, 16)
         rlay.setSpacing(12)
 
-        rlay.addWidget(label("CONTROLS", C['muted'], 10, True))
-        rlay.addWidget(separator())
+        # Info section
+        rlay.addWidget(label("FILE INFO", C['muted'], 9, True))
+        info_sep = separator(); info_sep.setMaximumHeight(1)
+        rlay.addWidget(info_sep)
 
-        self._file_lbl = label("—", C['text'], 11)
+        self._file_lbl = label("No file", C['text'], 10)
         self._file_lbl.setWordWrap(True)
         rlay.addWidget(self._file_lbl)
-        self._size_lbl = label("—", C['muted'], 10)
+        self._size_lbl = label("Dimensions: —", C['muted'], 9)
         rlay.addWidget(self._size_lbl)
-        rlay.addWidget(separator())
 
-        rlay.addWidget(label("POINTS", C['muted'], 10, True))
+        # Measurement section
+        rlay.addWidget(separator())
+        rlay.addWidget(label("MEASUREMENT", C['muted'], 9, True))
+        dist_sep = separator(); dist_sep.setMaximumHeight(1)
+        rlay.addWidget(dist_sep)
+
+        self._dist_lbl = label("-- px", C['accent'], 28, True)
+        self._dist_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        rlay.addWidget(self._dist_lbl)
+
+        # Points section
+        rlay.addWidget(separator())
+        rlay.addWidget(label("POINT COORDINATES", C['muted'], 9, True))
+        pts_sep = separator(); pts_sep.setMaximumHeight(1)
+        rlay.addWidget(pts_sep)
 
         spin_style = f"""
             QSpinBox {{
                 background:{C['surface']}; border:1px solid {C['border']};
-                border-radius:4px; color:{C['text']}; padding:2px 4px;
-                font-size:11px; font-family:'Consolas','Courier New',monospace;
+                border-radius:4px; color:{C['text']}; padding:4px 6px;
+                font-size:10px; font-family:'Consolas','Courier New',monospace;
             }}
             QSpinBox:focus {{ border-color:{C['accent']}; }}
             QSpinBox::up-button, QSpinBox::down-button {{
-                width:14px; background:{C['panel']}; border:none;
+                width:16px; background:{C['panel']}; border:none;
             }}
         """
 
+        # P1
         p1_hdr = QHBoxLayout()
         p1_dot = QLabel("●")
-        p1_dot.setStyleSheet(f"color:{C['green']}; font-size:13px;")
+        p1_dot.setStyleSheet(f"color:{C['green']}; font-size:14px;")
         p1_hdr.addWidget(p1_dot)
-        p1_hdr.addWidget(label("P1", C['green'], 11, True))
+        p1_hdr.addWidget(label("P1  POINT", C['green'], 10, True))
         p1_hdr.addStretch()
-        self._p1_apply_btn = QPushButton("Apply")
-        self._p1_apply_btn.setFixedSize(44, 20)
-        self._p1_apply_btn.setStyleSheet(f"""
-            QPushButton {{
-                background:{C['green']}22; border:1px solid {C['green']}66;
-                border-radius:3px; color:{C['green']}; font-size:9px; font-weight:bold;
-            }}
-            QPushButton:hover {{ background:{C['green']}44; }}
-        """)
+        self._p1_apply_btn = btn("Set", C['green'], True)
+        self._p1_apply_btn.setFixedWidth(50)
         p1_hdr.addWidget(self._p1_apply_btn)
         rlay.addLayout(p1_hdr)
 
         p1_coords = QHBoxLayout()
-        p1_coords.setSpacing(4)
-        p1_coords.addWidget(label("X", C['muted'], 10))
+        p1_coords.setSpacing(6)
+        p1_coords.addWidget(label("X", C['muted'], 9))
         self._p1_x = QSpinBox(); self._p1_x.setRange(0, 99999)
-        self._p1_x.setStyleSheet(spin_style); self._p1_x.setFixedWidth(72)
+        self._p1_x.setStyleSheet(spin_style); self._p1_x.setFixedWidth(80)
         p1_coords.addWidget(self._p1_x)
-        p1_coords.addWidget(label("Y", C['muted'], 10))
+        p1_coords.addWidget(label("Y", C['muted'], 9))
         self._p1_y = QSpinBox(); self._p1_y.setRange(0, 99999)
-        self._p1_y.setStyleSheet(spin_style); self._p1_y.setFixedWidth(72)
+        self._p1_y.setStyleSheet(spin_style); self._p1_y.setFixedWidth(80)
         p1_coords.addWidget(self._p1_y)
         rlay.addLayout(p1_coords)
 
+        # P2
         p2_hdr = QHBoxLayout()
         p2_dot = QLabel("●")
-        p2_dot.setStyleSheet(f"color:{C['accent']}; font-size:13px;")
+        p2_dot.setStyleSheet(f"color:{C['accent']}; font-size:14px;")
         p2_hdr.addWidget(p2_dot)
-        p2_hdr.addWidget(label("P2", C['accent'], 11, True))
+        p2_hdr.addWidget(label("P2  POINT", C['accent'], 10, True))
         p2_hdr.addStretch()
-        self._p2_apply_btn = QPushButton("Apply")
-        self._p2_apply_btn.setFixedSize(44, 20)
-        self._p2_apply_btn.setStyleSheet(f"""
-            QPushButton {{
-                background:{C['accent']}22; border:1px solid {C['accent']}66;
-                border-radius:3px; color:{C['accent']}; font-size:9px; font-weight:bold;
-            }}
-            QPushButton:hover {{ background:{C['accent']}44; }}
-        """)
+        self._p2_apply_btn = btn("Set", C['accent'], True)
+        self._p2_apply_btn.setFixedWidth(50)
         p2_hdr.addWidget(self._p2_apply_btn)
         rlay.addLayout(p2_hdr)
 
         p2_coords = QHBoxLayout()
-        p2_coords.setSpacing(4)
-        p2_coords.addWidget(label("X", C['muted'], 10))
+        p2_coords.setSpacing(6)
+        p2_coords.addWidget(label("X", C['muted'], 9))
         self._p2_x = QSpinBox(); self._p2_x.setRange(0, 99999)
-        self._p2_x.setStyleSheet(spin_style); self._p2_x.setFixedWidth(72)
+        self._p2_x.setStyleSheet(spin_style); self._p2_x.setFixedWidth(80)
         p2_coords.addWidget(self._p2_x)
-        p2_coords.addWidget(label("Y", C['muted'], 10))
+        p2_coords.addWidget(label("Y", C['muted'], 9))
         self._p2_y = QSpinBox(); self._p2_y.setRange(0, 99999)
-        self._p2_y.setStyleSheet(spin_style); self._p2_y.setFixedWidth(72)
+        self._p2_y.setStyleSheet(spin_style); self._p2_y.setFixedWidth(80)
         p2_coords.addWidget(self._p2_y)
         rlay.addLayout(p2_coords)
-
-        self._dist_lbl = label("Distance: —", C['muted'], 11)
-        rlay.addWidget(self._dist_lbl)
 
         self._p1_apply_btn.clicked.connect(self._apply_p1_manual)
         self._p2_apply_btn.clicked.connect(self._apply_p2_manual)
@@ -1502,9 +1566,14 @@ class AnnotationSection(QWidget):
             self._edit_id = None
             self._load_current()
 
-    def _toggle_preview(self, checked):
-        self.canvas.set_preview_mode(checked)
-        self.canvas._redraw()
+    def _on_preview_mode_changed(self, text: str):
+        mode_map = {"Original": "original", "Threshold": "threshold", "Threads 640×480": "threads"}
+        mode = mode_map.get(text, "original")
+        self.canvas.set_preview_mode(mode)
+        # Update header label to show current mode
+        mode_display = {"original": "Original", "threshold": "Threshold", "threads": "Model Training (640×480)"}
+        self._mode_lbl.setText(mode_display.get(mode, "Original"))
+
 
     def _save_entry(self):
         pts = self.canvas.get_points()

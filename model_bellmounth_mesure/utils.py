@@ -105,12 +105,13 @@ def ndarray_to_qpixmap(arr):
 
 
 def apply_threshold(bgr):
-    """Apply threshold to convert image to binary."""
+    """Apply threshold to convert image to binary - optimized."""
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)  # Reduced from (5,5)
+    # Use smaller kernel (21 instead of 31) for faster adaptive threshold
     th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                               cv2.THRESH_BINARY_INV, 31, 5)
-    k = np.ones((3, 3), np.uint8)
+                               cv2.THRESH_BINARY_INV, 21, 5)
+    k = np.ones((2, 2), np.uint8)  # Reduced from (3,3)
     th = cv2.morphologyEx(th, cv2.MORPH_OPEN, k)
     return cv2.morphologyEx(th, cv2.MORPH_CLOSE, k)
 

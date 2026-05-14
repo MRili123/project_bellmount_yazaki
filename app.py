@@ -231,6 +231,8 @@ class MainApp:
         self._loop_running = False
         if self.cap:
             self.cap.release()
+        if self.pixel_measure:
+            self.pixel_measure.close()
         self.root.destroy()
 
     def _build_ui(self):
