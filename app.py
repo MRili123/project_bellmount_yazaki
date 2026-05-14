@@ -159,13 +159,18 @@ class MainApp:
         self.zoom = 1.0
         self.pan_x = 0
         self.pan_y = 0
+        self.cached_canvas_size = (0, 0)
+        self.frame_count = 0
         self.drag_start = None
+        self.last_zoom = 1.0
+        self.sdk_call_count = 0
         self.annotation_count = self._count_annotations()
         self._tf_model = None
 
         self._build_ui()
         self._update_clock()
         self._start_loop()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
 
     def _init_sdk(self):
         self.camera_ok = False
@@ -221,6 +226,11 @@ class MainApp:
         body.pack(fill=tk.X, padx=12, pady=(0, 12))
         return body
 
+    def _on_closing(self):
+        if self.cap:
+            self.cap.release()
+        self.root.destroy()
+
     def _build_ui(self):
         # Header bar
         top = tk.Frame(self.root, bg=PANEL, height=58)
@@ -243,7 +253,7 @@ class MainApp:
         self.clock_lbl = tk.Label(top, text="--:--:--", bg=PANEL, fg=TEXT2, font=("Consolas", 10))
         self.clock_lbl.pack(side=tk.LEFT, padx=12)
         tk.Frame(top, bg=BORDER, width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12)
-        tk.Button(top, text="QUIT", command=self.root.destroy,
+        tk.Button(top, text="QUIT", command=self._on_closing,
                  bg=RED, fg=TEXT, font=("Arial", 9, "bold"),
                  relief=tk.FLAT, bd=0, padx=18, activebackground=RED,
                  activeforeground=TEXT).pack(side=tk.LEFT, padx=20, pady=12)
@@ -322,6 +332,40 @@ class MainApp:
         self.btn_manual.pack(side=tk.LEFT)
         self.mode_btns = {"AUTO": self.btn_auto, "MANUAL": self.btn_manual}
 
+        # Manual coordinate input card (shown only in MANUAL mode)
+        self.manual_input_card = self._card(right, "MANUAL INPUT")
+
+        # P1 input
+        p1_row = tk.Frame(self.manual_input_card, bg=CARD)
+        p1_row.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(p1_row, text="P1", bg=CARD, fg=GREEN, font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Label(p1_row, text="X:", bg=CARD, fg=TEXT2, font=("Arial", 9)).pack(side=tk.LEFT)
+        self.p1x_entry = tk.Entry(p1_row, bg=PANEL, fg=TEXT, font=("Consolas", 10),
+                                  relief=tk.FLAT, bd=1, width=8)
+        self.p1x_entry.pack(side=tk.LEFT, padx=4)
+        tk.Label(p1_row, text="Y:", bg=CARD, fg=TEXT2, font=("Arial", 9)).pack(side=tk.LEFT)
+        self.p1y_entry = tk.Entry(p1_row, bg=PANEL, fg=TEXT, font=("Consolas", 10),
+                                  relief=tk.FLAT, bd=1, width=8)
+        self.p1y_entry.pack(side=tk.LEFT, padx=4)
+
+        # P2 input
+        p2_row = tk.Frame(self.manual_input_card, bg=CARD)
+        p2_row.pack(fill=tk.X)
+        tk.Label(p2_row, text="P2", bg=CARD, fg=ACCENT, font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Label(p2_row, text="X:", bg=CARD, fg=TEXT2, font=("Arial", 9)).pack(side=tk.LEFT)
+        self.p2x_entry = tk.Entry(p2_row, bg=PANEL, fg=TEXT, font=("Consolas", 10),
+                                  relief=tk.FLAT, bd=1, width=8)
+        self.p2x_entry.pack(side=tk.LEFT, padx=4)
+        tk.Label(p2_row, text="Y:", bg=CARD, fg=TEXT2, font=("Arial", 9)).pack(side=tk.LEFT)
+        self.p2y_entry = tk.Entry(p2_row, bg=PANEL, fg=TEXT, font=("Consolas", 10),
+                                  relief=tk.FLAT, bd=1, width=8)
+        self.p2y_entry.pack(side=tk.LEFT, padx=4)
+
+        # Apply button
+        tk.Button(self.manual_input_card, text="APPLY COORDINATES", command=self._apply_manual_coords,
+                 bg=GREEN, fg="#001A00", font=("Arial", 9, "bold"),
+                 relief=tk.FLAT, bd=0, pady=8).pack(fill=tk.X, pady=(8, 0))
+
         # Actions card
         body = self._card(right, "ACTIONS")
         self.capture_btn = tk.Button(body, text="CAPTURE", command=self._on_capture,
@@ -369,6 +413,13 @@ class MainApp:
         self.mode_btns["MANUAL"].config(bg=BTN if mode=="MANUAL" else SEP,
                                         fg=TEXT if mode=="MANUAL" else TEXT2)
         self.p1 = self.p2 = self.dist_mm = None
+
+        # Show/hide manual input card based on mode
+        if mode == "MANUAL":
+            self.manual_input_card.pack(fill=tk.X, padx=12, pady=5)
+        else:
+            self.manual_input_card.pack_forget()
+
         self._update_display()
 
     def _on_scroll(self, event):
@@ -377,6 +428,9 @@ class MainApp:
         else:
             self.zoom /= 1.1
         self.zoom = max(1, min(self.zoom, 10))
+        # Recalculate distance when zoom changes (SDK FOVx changes with zoom)
+        self._compute_distance()
+        self._update_display()
 
     def _on_press(self, event):
         if self.mode == "MANUAL" and self.current_frame is not None:
@@ -411,8 +465,18 @@ class MainApp:
 
                 if self.p1 is None:
                     self.p1 = (x, y)
+                    # Update input fields
+                    self.p1x_entry.delete(0, tk.END)
+                    self.p1x_entry.insert(0, str(x))
+                    self.p1y_entry.delete(0, tk.END)
+                    self.p1y_entry.insert(0, str(y))
                 elif self.p2 is None:
                     self.p2 = (x, y)
+                    # Update input fields
+                    self.p2x_entry.delete(0, tk.END)
+                    self.p2x_entry.insert(0, str(x))
+                    self.p2y_entry.delete(0, tk.END)
+                    self.p2y_entry.insert(0, str(y))
                     self._compute_distance()
         else:
             self.drag_start = (event.x, event.y)
@@ -530,6 +594,19 @@ class MainApp:
         except:
             pass
 
+    def _apply_manual_coords(self):
+        try:
+            p1x = int(self.p1x_entry.get().strip())
+            p1y = int(self.p1y_entry.get().strip())
+            p2x = int(self.p2x_entry.get().strip())
+            p2y = int(self.p2y_entry.get().strip())
+            self.p1 = (p1x, p1y)
+            self.p2 = (p2x, p2y)
+            self._compute_distance()
+            self._update_display()
+        except ValueError:
+            pass
+
     def _count_annotations(self):
         if ANNOTATIONS_FILE.exists():
             return len(json.loads(ANNOTATIONS_FILE.read_text() or "[]"))
@@ -546,6 +623,7 @@ class MainApp:
         disp = self.current_frame.copy()
         h, w = disp.shape[:2]
 
+        # Apply zoom by cropping and resizing back
         if self.zoom > 1:
             new_w = int(w / self.zoom)
             new_h = int(h / self.zoom)
@@ -556,38 +634,54 @@ class MainApp:
             x2 = min(cx + new_w // 2, w)
             y2 = min(cy + new_h // 2, h)
             disp = disp[y1:y2, x1:x2]
-            disp = cv2.resize(disp, (w, h))
+            # Resize back to original size for correct coordinate mapping
+            disp = cv2.resize(disp, (w, h), interpolation=cv2.INTER_LINEAR)
 
-        # Cable status
-        status_color = (0, 255, 0) if cable_detector.stable_status == "Cable IN" else (0, 0, 255)
-        cv2.putText(disp, cable_detector.stable_status, (10, 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
+        # Scale drawing elements based on zoom
+        point_radius = max(2, int(5 * min(self.zoom, 1.2)))
+        line_thickness = max(1, int(2 * min(self.zoom, 2)))
+        dash_segment = max(8, int(16 * min(self.zoom, 1.5)))
+        text_size = 0.6 * min(self.zoom, 2)
 
-        # Draw points and line
-        if self.p1:
-            cv2.circle(disp, self.p1, 16, (0, 191, 255), 2)
-            cv2.circle(disp, self.p1, 5, (255, 255, 255), -1)
-        if self.p2:
-            cv2.circle(disp, self.p2, 16, (0, 191, 255), 2)
-            cv2.circle(disp, self.p2, 5, (255, 255, 255), -1)
-        if self.p1 and self.p2:
-            dx, dy = self.p2[0]-self.p1[0], self.p2[1]-self.p1[1]
+        # Center of frame for zoom reference
+        center_x, center_y = w / 2, h / 2
+
+        # Scale point positions from center based on zoom
+        def scale_point(pt, zoom):
+            if pt is None:
+                return None
+            # Move point away from center based on zoom
+            dx = pt[0] - center_x
+            dy = pt[1] - center_y
+            new_x = int(center_x + dx * zoom)
+            new_y = int(center_y + dy * zoom)
+            return (new_x, new_y)
+
+        p1_scaled = scale_point(self.p1, self.zoom)
+        p2_scaled = scale_point(self.p2, self.zoom)
+
+        # Draw points and line with scaled positions
+        if p1_scaled:
+            cv2.circle(disp, p1_scaled, point_radius, (0, 255, 0), -1)  # Green filled dot for P1
+        if p2_scaled:
+            cv2.circle(disp, p2_scaled, point_radius, (255, 0, 0), -1)  # Blue filled dot for P2
+        if p1_scaled and p2_scaled:
+            dx, dy = p2_scaled[0]-p1_scaled[0], p2_scaled[1]-p1_scaled[1]
             dist = int(math.hypot(dx, dy))
-            for i in range(0, dist, 16):
-                t0 = i/dist if dist > 0 else 0
-                t1 = min((i+10)/dist, 1.0) if dist > 0 else 1.0
-                s = (int(self.p1[0]+t0*dx), int(self.p1[1]+t0*dy))
-                e = (int(self.p1[0]+t1*dx), int(self.p1[1]+t1*dy))
-                cv2.line(disp, s, e, (0, 191, 255), 2)
+            if dist > 20:  # Only draw dashed line if distance is meaningful
+                step = max(10, dash_segment)
+                for i in range(0, dist, step):
+                    t0 = i/dist
+                    t1 = min((i+step*0.6)/dist, 1.0)
+                    s = (int(p1_scaled[0]+t0*dx), int(p1_scaled[1]+t0*dy))
+                    e = (int(p1_scaled[0]+t1*dx), int(p1_scaled[1]+t1*dy))
+                    cv2.line(disp, s, e, (0, 191, 255), line_thickness)
 
             if self.dist_mm is not None:
-                mid = ((self.p1[0]+self.p2[0])//2, (self.p1[1]+self.p2[1])//2)
+                mid = ((p1_scaled[0]+p2_scaled[0])//2, (p1_scaled[1]+p2_scaled[1])//2)
                 txt = f"{self.dist_mm:.2f} mm"
-                (tw, th), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                cv2.rectangle(disp, (mid[0]-tw//2-6, mid[1]-th-8),
-                             (mid[0]+tw//2+6, mid[1]+4), (0, 0, 0), -1)
-                cv2.putText(disp, txt, (mid[0]-tw//2, mid[1]),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 191, 255), 2)
+                cv2.putText(disp, txt, (mid[0], mid[1]),
+                           cv2.FONT_HERSHEY_SIMPLEX, text_size, (0, 0, 255), int(line_thickness))
 
         # Manual mode hint
         if self.mode == "MANUAL":
@@ -596,12 +690,19 @@ class MainApp:
                 cv2.rectangle(disp, (0, h-36), (len(hint)*9+20, h), (0, 0, 0), -1)
                 cv2.putText(disp, hint, (10, h-12), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 191, 255), 2)
 
-        # Display on canvas - resize to match canvas dimensions
+        # Display on canvas - only resize if needed
         canvas_w = self.canvas.winfo_width()
         canvas_h = self.canvas.winfo_height()
 
         if canvas_w > 1 and canvas_h > 1:
-            disp = cv2.resize(disp, (canvas_w, canvas_h))
+            if (canvas_w, canvas_h) != self.cached_canvas_size:
+                # Canvas size changed - resize with INTER_LINEAR (faster than default)
+                disp = cv2.resize(disp, (canvas_w, canvas_h), interpolation=cv2.INTER_LINEAR)
+                self.cached_canvas_size = (canvas_w, canvas_h)
+            elif disp.shape != (canvas_h, canvas_w, 3):
+                # Size mismatch (e.g., after crop) - resize
+                disp = cv2.resize(disp, (canvas_w, canvas_h), interpolation=cv2.INTER_LINEAR)
+            # Otherwise skip resize - display is already correct size
 
         rgb = cv2.cvtColor(disp, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(rgb)
@@ -627,22 +728,34 @@ class MainApp:
 
         ret, frame = self.cap.read()
         if ret:
-            self.current_frame = frame.copy()
-            detect_cable(frame)
-            self._update_display()
+            # Reduce frame size for faster processing (but keep original for calculations)
+            if frame.shape[1] > 1280:
+                frame = cv2.resize(frame, (1280, int(frame.shape[0] * 1280 / frame.shape[1])))
+            self.current_frame = frame
 
-            self.pixel_measure.update()
-            zoom, mpp = self.pixel_measure.get_values()
-            if zoom:
-                self.zoom_val.config(text=f"{zoom:.2f}x")
-            if mpp:
-                self.mpp_val.config(text=f"{mpp:.5f}")
+            # Only update display every 2 frames (10 FPS display, but 20 FPS camera reads)
+            if self.frame_count % 2 == 0:
+                self._update_display()
 
-            color = GREEN if cable_detector.stable_status == "Cable IN" else RED
-            self.cable_dot.config(fg=color)
-            self.cable_lbl.config(text=cable_detector.stable_status, fg=color)
+            # Skip SDK calls if zoom is changing (avoid freeze during zoom)
+            zoom_changed = abs(self.zoom - self.last_zoom) > 0.01
+            self.last_zoom = self.zoom
 
-        self.root.after(33, self._start_loop)
+            # Update SDK values only every 10 frames AND only if zoom is stable
+            if self.frame_count % 10 == 0 and not zoom_changed:
+                try:
+                    self.pixel_measure.update()
+                    zoom, mpp = self.pixel_measure.get_values()
+                    if zoom:
+                        self.zoom_val.config(text=f"{zoom:.2f}x")
+                    if mpp:
+                        self.mpp_val.config(text=f"{mpp:.5f}")
+                except:
+                    pass
+
+            self.frame_count += 1
+
+        self.root.after(50, self._start_loop)
 
     def run(self):
         self.root.mainloop()
