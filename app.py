@@ -60,7 +60,7 @@ class LoginWindow:
     def __init__(self):
         self.window = tk.Tk()
         self.window.title("Bellmounth Inspection System")
-        self.window.geometry("480x560")
+        self.window.geometry("500x650")
         self.window.configure(bg=BG)
         self.window.resizable(False, False)
 
@@ -77,49 +77,63 @@ class LoginWindow:
         return {"machine_name": "LAB-01", "password": "bellmounth"}
 
     def _build_ui(self):
-        tk.Frame(self.window, bg=BG, height=40).pack()
+        main = tk.Frame(self.window, bg=BG)
+        main.pack(fill=tk.BOTH, expand=True)
 
-        tk.Label(self.window, text="YAZAKI", bg=BG, fg=TEXT,
-                font=("Arial", 12, "bold")).pack()
-        tk.Label(self.window, text="BELLMOUNTH INSPECTION SYSTEM", bg=BG, fg=ACCENT,
-                font=("Arial", 22, "bold")).pack(pady=(4, 20))
+        # Top spacer
+        tk.Frame(main, bg=BG, height=60).pack()
 
-        sep = tk.Frame(self.window, bg=SEP, height=1)
-        sep.pack(fill=tk.X, padx=60, pady=(0, 30))
+        # Logo section - centered
+        logo_frame = tk.Frame(main, bg=BG)
+        logo_frame.pack(fill=tk.X)
 
-        card_outer = tk.Frame(self.window, bg=BORDER)
-        card_outer.pack(padx=40, pady=0, fill=tk.BOTH, expand=True)
+        tk.Label(logo_frame, text="●", bg=BG, fg=ACCENT, font=("Arial", 40, "bold")).pack()
+        tk.Label(logo_frame, text="BELLMOUNTH", bg=BG, fg=TEXT,
+                font=("Arial", 28, "bold")).pack(pady=(8, 2))
+        tk.Label(logo_frame, text="Inspection System", bg=BG, fg=TEXT2,
+                font=("Arial", 12)).pack(pady=(0, 40))
 
-        card = tk.Frame(card_outer, bg=CARD)
-        card.pack(fill=tk.BOTH, padx=1, pady=1)
+        # Form card
+        card = tk.Frame(main, bg=CARD)
+        card.pack(padx=40, fill=tk.BOTH, expand=True)
 
-        tk.Label(card, text="MACHINE NAME", bg=CARD, fg=TEXT2,
-                font=("Arial", 8, "bold")).pack(anchor=tk.W, padx=24, pady=(24, 6))
-        self.machine_entry = tk.Entry(card, font=("Consolas", 12),
-                                     bg=PANEL, fg=TEXT, insertbackground=TEXT,
-                                     relief=tk.FLAT, bd=0, highlightthickness=1,
+        # Machine name field
+        tk.Label(card, text="MACHINE ID", bg=CARD, fg=TEXT2,
+                font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=28, pady=(24, 8))
+        self.machine_entry = tk.Entry(card, font=("Consolas", 11),
+                                     bg=PANEL, fg=TEXT, insertbackground=ACCENT,
+                                     relief=tk.FLAT, bd=0, highlightthickness=2,
                                      highlightbackground=BORDER, highlightcolor=ACCENT)
         self.machine_entry.insert(0, self.config.get("machine_name", "LAB-01"))
-        self.machine_entry.pack(padx=24, pady=(0, 16), fill=tk.X)
+        self.machine_entry.pack(padx=28, pady=(0, 20), fill=tk.X, ipady=10)
 
+        # Password field
         tk.Label(card, text="PASSWORD", bg=CARD, fg=TEXT2,
-                font=("Arial", 8, "bold")).pack(anchor=tk.W, padx=24, pady=(0, 6))
-        self.password_entry = tk.Entry(card, font=("Consolas", 12), show="●",
-                                      bg=PANEL, fg=TEXT, insertbackground=TEXT,
-                                      relief=tk.FLAT, bd=0, highlightthickness=1,
+                font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=28, pady=(0, 8))
+        self.password_entry = tk.Entry(card, font=("Consolas", 11), show="●",
+                                      bg=PANEL, fg=TEXT, insertbackground=ACCENT,
+                                      relief=tk.FLAT, bd=0, highlightthickness=2,
                                       highlightbackground=BORDER, highlightcolor=ACCENT)
-        self.password_entry.pack(padx=24, pady=(0, 20), fill=tk.X)
+        self.password_entry.pack(padx=28, pady=(0, 20), fill=tk.X, ipady=10)
 
+        # Error message
         self.error_label = tk.Label(card, text="", bg=CARD, fg=RED,
-                                   font=("Arial", 9))
-        self.error_label.pack(pady=(0, 12))
+                                   font=("Arial", 10))
+        self.error_label.pack(pady=(0, 16))
 
+        # Sign in button
         tk.Button(card, text="SIGN IN", command=self._login,
-                 bg=BTN, fg=TEXT, font=("Arial", 11, "bold"),
-                 relief=tk.FLAT, bd=0, pady=12, activebackground="#0D47A1",
-                 activeforeground=TEXT).pack(padx=24, pady=(0, 28), fill=tk.X)
+                 bg=ACCENT, fg="#001A3D", font=("Arial", 12, "bold"),
+                 relief=tk.FLAT, bd=0, padx=24, pady=12,
+                 activebackground="#00D4FF", activeforeground="#001A3D",
+                 cursor="hand2").pack(padx=28, pady=(0, 28), fill=tk.X)
+
+        # Footer
+        tk.Label(card, text="Press Enter to sign in", bg=CARD, fg=TEXT2,
+                font=("Arial", 9)).pack(pady=(0, 20))
 
         self.password_entry.bind("<Return>", lambda e: self._login())
+        self.machine_entry.focus()
 
     def _login(self):
         machine = self.machine_entry.get().strip()
@@ -129,8 +143,9 @@ class LoginWindow:
             self.result = machine
             self.window.destroy()
         else:
-            self.error_label.config(text="⚠ Incorrect password")
+            self.error_label.config(text="✕ Incorrect password")
             self.password_entry.delete(0, tk.END)
+            self.password_entry.focus()
 
     def show(self):
         self.window.mainloop()
