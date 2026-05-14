@@ -57,11 +57,20 @@ if not ANNOTATIONS_FILE.exists():
 
 # ==================== LOGIN WINDOW ====================
 class LoginWindow:
+    # Light theme colors for login
+    LOGIN_BG = "#FFFFFF"
+    LOGIN_CARD = "#FFFFFF"
+    LOGIN_PANEL = "#F5F5F5"
+    LOGIN_BORDER = "#E0E0E0"
+    LOGIN_TEXT = "#1A1A1A"
+    LOGIN_TEXT2 = "#666666"
+    LOGIN_RED = "#AF151D"
+
     def __init__(self):
         self.window = tk.Tk()
         self.window.title("Bellmounth Inspection System")
         self.window.geometry("500x650")
-        self.window.configure(bg=BG)
+        self.window.configure(bg=self.LOGIN_BG)
         self.window.resizable(False, False)
 
         self.config = self._load_config()
@@ -77,65 +86,65 @@ class LoginWindow:
         return {"machine_name": "LAB-01", "password": "bellmounth"}
 
     def _build_ui(self):
-        main = tk.Frame(self.window, bg=BG)
+        main = tk.Frame(self.window, bg=self.LOGIN_BG)
         main.pack(fill=tk.BOTH, expand=True)
 
         # Top spacer
-        tk.Frame(main, bg=BG, height=40).pack()
+        tk.Frame(main, bg=self.LOGIN_BG, height=40).pack()
 
         # Logo section - Yazaki inspired with camera
-        logo_frame = tk.Frame(main, bg=BG)
+        logo_frame = tk.Frame(main, bg=self.LOGIN_BG)
         logo_frame.pack(fill=tk.X)
 
         # Red triangle (Yazaki signature) + Camera (Bellmounth)
-        header_frame = tk.Frame(logo_frame, bg=BG)
+        header_frame = tk.Frame(logo_frame, bg=self.LOGIN_BG)
         header_frame.pack(pady=(0, 12))
 
-        tk.Label(header_frame, text="▶", bg=BG, fg="#AF151D", font=("Arial", 48, "bold")).pack(side=tk.LEFT, padx=(0, 8))
-        tk.Label(header_frame, text="📷", bg=BG, fg=TEXT, font=("Arial", 40)).pack(side=tk.LEFT)
+        tk.Label(header_frame, text="▶", bg=self.LOGIN_BG, fg=self.LOGIN_RED, font=("Arial", 48, "bold")).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Label(header_frame, text="📷", bg=self.LOGIN_BG, fg=self.LOGIN_TEXT, font=("Arial", 40)).pack(side=tk.LEFT)
 
-        tk.Label(logo_frame, text="YAZAKI BELLMOUNTH", bg=BG, fg=TEXT,
+        tk.Label(logo_frame, text="YAZAKI BELLMOUNTH", bg=self.LOGIN_BG, fg=self.LOGIN_TEXT,
                 font=("Arial", 24, "bold")).pack(pady=(8, 2))
-        tk.Label(logo_frame, text="Cable Inspection & Measurement System", bg=BG, fg=TEXT2,
+        tk.Label(logo_frame, text="Cable Inspection & Measurement System", bg=self.LOGIN_BG, fg=self.LOGIN_TEXT2,
                 font=("Arial", 11)).pack(pady=(0, 40))
 
         # Form card
-        card = tk.Frame(main, bg=CARD)
+        card = tk.Frame(main, bg=self.LOGIN_CARD)
         card.pack(padx=40, fill=tk.BOTH, expand=True)
 
         # Machine name field
-        tk.Label(card, text="MACHINE ID", bg=CARD, fg=TEXT2,
+        tk.Label(card, text="MACHINE ID", bg=self.LOGIN_CARD, fg=self.LOGIN_TEXT2,
                 font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=28, pady=(24, 8))
         self.machine_entry = tk.Entry(card, font=("Consolas", 11),
-                                     bg=PANEL, fg=TEXT, insertbackground=ACCENT,
+                                     bg=self.LOGIN_PANEL, fg=self.LOGIN_TEXT, insertbackground=self.LOGIN_RED,
                                      relief=tk.FLAT, bd=0, highlightthickness=2,
-                                     highlightbackground=BORDER, highlightcolor=ACCENT)
+                                     highlightbackground=self.LOGIN_BORDER, highlightcolor=self.LOGIN_RED)
         self.machine_entry.insert(0, self.config.get("machine_name", "LAB-01"))
         self.machine_entry.pack(padx=28, pady=(0, 20), fill=tk.X, ipady=10)
 
         # Password field
-        tk.Label(card, text="PASSWORD", bg=CARD, fg=TEXT2,
+        tk.Label(card, text="PASSWORD", bg=self.LOGIN_CARD, fg=self.LOGIN_TEXT2,
                 font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=28, pady=(0, 8))
         self.password_entry = tk.Entry(card, font=("Consolas", 11), show="●",
-                                      bg=PANEL, fg=TEXT, insertbackground=ACCENT,
+                                      bg=self.LOGIN_PANEL, fg=self.LOGIN_TEXT, insertbackground=self.LOGIN_RED,
                                       relief=tk.FLAT, bd=0, highlightthickness=2,
-                                      highlightbackground=BORDER, highlightcolor=ACCENT)
+                                      highlightbackground=self.LOGIN_BORDER, highlightcolor=self.LOGIN_RED)
         self.password_entry.pack(padx=28, pady=(0, 20), fill=tk.X, ipady=10)
 
         # Error message
-        self.error_label = tk.Label(card, text="", bg=CARD, fg=RED,
+        self.error_label = tk.Label(card, text="", bg=self.LOGIN_CARD, fg=self.LOGIN_RED,
                                    font=("Arial", 10))
         self.error_label.pack(pady=(0, 16))
 
         # Sign in button - Yazaki red
         tk.Button(card, text="SIGN IN", command=self._login,
-                 bg="#AF151D", fg="#FFFFFF", font=("Arial", 12, "bold"),
+                 bg=self.LOGIN_RED, fg="#FFFFFF", font=("Arial", 12, "bold"),
                  relief=tk.FLAT, bd=0, padx=24, pady=12,
                  activebackground="#8B0F15", activeforeground="#FFFFFF",
                  cursor="hand2").pack(padx=28, pady=(0, 28), fill=tk.X)
 
         # Footer
-        tk.Label(card, text="Press Enter to sign in", bg=CARD, fg=TEXT2,
+        tk.Label(card, text="Press Enter to sign in", bg=self.LOGIN_CARD, fg=self.LOGIN_TEXT2,
                 font=("Arial", 9)).pack(pady=(0, 20))
 
         self.password_entry.bind("<Return>", lambda e: self._login())
