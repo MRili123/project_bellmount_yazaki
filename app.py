@@ -92,21 +92,26 @@ class LoginWindow:
         # Top spacer
         tk.Frame(main, bg=self.LOGIN_BG, height=40).pack()
 
-        # Logo section - Yazaki inspired with camera
+        # Logo section - Display logo image
         logo_frame = tk.Frame(main, bg=self.LOGIN_BG)
-        logo_frame.pack(fill=tk.X)
+        logo_frame.pack(fill=tk.X, pady=(0, 30))
 
-        # Red triangle (Yazaki signature) + Camera (Bellmounth)
-        header_frame = tk.Frame(logo_frame, bg=self.LOGIN_BG)
-        header_frame.pack(pady=(0, 12))
-
-        tk.Label(header_frame, text="▶", bg=self.LOGIN_BG, fg=self.LOGIN_RED, font=("Arial", 48, "bold")).pack(side=tk.LEFT, padx=(0, 8))
-        tk.Label(header_frame, text="📷", bg=self.LOGIN_BG, fg=self.LOGIN_TEXT, font=("Arial", 40)).pack(side=tk.LEFT)
-
-        tk.Label(logo_frame, text="YAZAKI BELLMOUNTH", bg=self.LOGIN_BG, fg=self.LOGIN_TEXT,
-                font=("Arial", 24, "bold")).pack(pady=(8, 2))
-        tk.Label(logo_frame, text="Cable Inspection & Measurement System", bg=self.LOGIN_BG, fg=self.LOGIN_TEXT2,
-                font=("Arial", 11)).pack(pady=(0, 40))
+        # Load and display logo image
+        logo_path = Path(__file__).parent / "logo.png"
+        if logo_path.exists():
+            try:
+                logo_img = Image.open(str(logo_path))
+                logo_img = logo_img.resize((350, 80), Image.Resampling.LANCZOS)
+                logo_photo = ImageTk.PhotoImage(logo_img)
+                logo_label = tk.Label(logo_frame, image=logo_photo, bg=self.LOGIN_BG)
+                logo_label.image = logo_photo
+                logo_label.pack()
+            except Exception as e:
+                tk.Label(logo_frame, text="YAZAKI BELLMOUNTH", bg=self.LOGIN_BG, fg=self.LOGIN_TEXT,
+                        font=("Arial", 24, "bold")).pack()
+        else:
+            tk.Label(logo_frame, text="YAZAKI BELLMOUNTH", bg=self.LOGIN_BG, fg=self.LOGIN_TEXT,
+                    font=("Arial", 24, "bold")).pack()
 
         # Form card
         card = tk.Frame(main, bg=self.LOGIN_CARD)
@@ -271,11 +276,22 @@ class MainApp:
         top.pack(fill=tk.X, side=tk.TOP)
         top.pack_propagate(False)
 
-        tk.Label(top, text="YAZAKI", bg=PANEL, fg=TEXT,
-                font=("Arial", 13, "bold"), padx=20).pack(side=tk.LEFT, pady=12)
-        tk.Frame(top, bg=BORDER, width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12)
-        tk.Label(top, text="BELLMOUNTH INSPECTION SYSTEM", bg=PANEL, fg=ACCENT,
-                font=("Arial", 13)).pack(side=tk.LEFT, padx=0)
+        # Load and display logo in header
+        logo_path = Path(__file__).parent / "logo.png"
+        if logo_path.exists():
+            try:
+                logo_img = Image.open(str(logo_path))
+                logo_img = logo_img.resize((200, 40), Image.Resampling.LANCZOS)
+                logo_photo = ImageTk.PhotoImage(logo_img)
+                logo_label = tk.Label(top, image=logo_photo, bg=PANEL)
+                logo_label.image = logo_photo
+                logo_label.pack(side=tk.LEFT, padx=12, pady=9)
+            except:
+                tk.Label(top, text="YAZAKI BELLMOUNTH", bg=PANEL, fg=TEXT,
+                        font=("Arial", 13, "bold"), padx=20).pack(side=tk.LEFT, pady=12)
+        else:
+            tk.Label(top, text="YAZAKI BELLMOUNTH", bg=PANEL, fg=TEXT,
+                    font=("Arial", 13, "bold"), padx=20).pack(side=tk.LEFT, pady=12)
 
         tk.Frame(top, bg=PANEL).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
