@@ -142,11 +142,13 @@ class LoginWindow:
         self.error_label.pack(pady=(0, 16))
 
         # Sign in button - Yazaki red
-        tk.Button(card, text="SIGN IN", command=self._login,
+        sign_in_btn = tk.Button(card, text="SIGN IN", command=self._login,
                  bg=self.LOGIN_RED, fg="#FFFFFF", font=("Arial", 12, "bold"),
                  relief=tk.FLAT, bd=0, padx=24, pady=12,
                  activebackground="#8B0F15", activeforeground="#FFFFFF",
-                 cursor="hand2").pack(padx=28, pady=(0, 28), fill=tk.X)
+                 cursor="hand2")
+        sign_in_btn.pack(padx=28, pady=(0, 28), fill=tk.X)
+        add_hover_effect(sign_in_btn, self.LOGIN_RED, "#8B0F15")
 
         # Footer
         tk.Label(card, text="Press Enter to sign in", bg=self.LOGIN_CARD, fg=self.LOGIN_TEXT2,
@@ -170,6 +172,15 @@ class LoginWindow:
     def show(self):
         self.window.mainloop()
         return self.result
+
+# ==================== BUTTON HOVER ANIMATION ====================
+def add_hover_effect(button, normal_color, hover_color):
+    def on_enter(event):
+        button.config(bg=hover_color)
+    def on_leave(event):
+        button.config(bg=normal_color)
+    button.bind("<Enter>", on_enter)
+    button.bind("<Leave>", on_leave)
 
 # ==================== MAIN APP ====================
 class MainApp:
@@ -303,10 +314,12 @@ class MainApp:
         self.clock_lbl = tk.Label(top, text="--:--:--", bg=PANEL, fg=TEXT2, font=("Consolas", 10))
         self.clock_lbl.pack(side=tk.LEFT, padx=12)
         tk.Frame(top, bg=BORDER, width=1).pack(side=tk.LEFT, fill=tk.Y, padx=12)
-        tk.Button(top, text="QUIT", command=self._on_closing,
+        quit_btn = tk.Button(top, text="QUIT", command=self._on_closing,
                  bg=RED, fg=TEXT, font=("Arial", 9, "bold"),
                  relief=tk.FLAT, bd=0, padx=18, activebackground=RED,
-                 activeforeground=TEXT).pack(side=tk.LEFT, padx=20, pady=12)
+                 activeforeground=TEXT)
+        quit_btn.pack(side=tk.LEFT, padx=20, pady=12)
+        add_hover_effect(quit_btn, RED, "#8B0F15")
 
         # Content area
         content = tk.Frame(self.root, bg=BG)
@@ -376,10 +389,14 @@ class MainApp:
                                  bg=BTN, fg=TEXT, font=("Arial", 9, "bold"),
                                  relief=tk.FLAT, bd=0, pady=8, width=12)
         self.btn_auto.pack(side=tk.LEFT, padx=(0, 4))
+        add_hover_effect(self.btn_auto, BTN, "#8B4513")
+
         self.btn_manual = tk.Button(row, text="MANUAL", command=lambda: self._set_mode("MANUAL"),
                                    bg=SEP, fg=TEXT2, font=("Arial", 9, "bold"),
                                    relief=tk.FLAT, bd=0, pady=8, width=12)
         self.btn_manual.pack(side=tk.LEFT)
+        add_hover_effect(self.btn_manual, SEP, "#D3D3D3")
+
         self.mode_btns = {"AUTO": self.btn_auto, "MANUAL": self.btn_manual}
 
         # Manual coordinate input card (shown only in MANUAL mode)
@@ -412,9 +429,11 @@ class MainApp:
         self.p2y_entry.pack(side=tk.LEFT, padx=4)
 
         # Apply button
-        tk.Button(self.manual_input_card, text="APPLY COORDINATES", command=self._apply_manual_coords,
+        apply_btn = tk.Button(self.manual_input_card, text="APPLY COORDINATES", command=self._apply_manual_coords,
                  bg=GREEN, fg="#001A00", font=("Arial", 9, "bold"),
-                 relief=tk.FLAT, bd=0, pady=8).pack(fill=tk.X, pady=(8, 0))
+                 relief=tk.FLAT, bd=0, pady=8)
+        apply_btn.pack(fill=tk.X, pady=(8, 0))
+        add_hover_effect(apply_btn, GREEN, "#45A049")
 
         # Actions card
         body = self._card(right, "ACTIONS")
@@ -422,10 +441,13 @@ class MainApp:
                                     bg=BTN, fg=TEXT, font=("Arial", 11, "bold"),
                                     relief=tk.FLAT, bd=0, pady=12)
         self.capture_btn.pack(fill=tk.X, pady=(0, 6))
+        add_hover_effect(self.capture_btn, BTN, "#8B4513")
+
         self.save_btn = tk.Button(body, text="SAVE ANNOTATION", command=self._save_annotation,
                                  bg=AMBER, fg="#1A1000", font=("Arial", 10, "bold"),
                                  relief=tk.FLAT, bd=0, pady=10, state=tk.DISABLED)
         self.save_btn.pack(fill=tk.X)
+        add_hover_effect(self.save_btn, AMBER, "#FF8C00")
         self.dataset_lbl = tk.Label(body, text=f"{self.annotation_count} samples",
                                    bg=CARD, fg=TEXT2, font=("Arial", 8))
         self.dataset_lbl.pack(anchor=tk.E, pady=(4, 0))
@@ -434,12 +456,17 @@ class MainApp:
         body = self._card(right, "ILLUMINATION")
         row = tk.Frame(body, bg=CARD)
         row.pack(fill=tk.X, pady=(0, 8))
-        tk.Button(row, text="LED  ON", command=self._led_on,
+        led_on_btn = tk.Button(row, text="LED  ON", command=self._led_on,
                  bg=GREEN, fg="#001A00", font=("Arial", 9, "bold"),
-                 relief=tk.FLAT, bd=0, pady=8).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
-        tk.Button(row, text="LED  OFF", command=self._led_off,
+                 relief=tk.FLAT, bd=0, pady=8)
+        led_on_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+        add_hover_effect(led_on_btn, GREEN, "#45A049")
+
+        led_off_btn = tk.Button(row, text="LED  OFF", command=self._led_off,
                  bg=SEP, fg=TEXT, font=("Arial", 9, "bold"),
-                 relief=tk.FLAT, bd=0, pady=8).pack(side=tk.LEFT, fill=tk.X, expand=True)
+                 relief=tk.FLAT, bd=0, pady=8)
+        led_off_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        add_hover_effect(led_off_btn, SEP, "#D3D3D3")
         tk.Label(body, text="BRIGHTNESS", bg=CARD, fg=TEXT2, font=("Arial", 8, "bold")).pack(anchor=tk.W)
         self.led_slider = tk.Scale(body, from_=1, to=6, orient=tk.HORIZONTAL,
                                   bg=CARD, fg=TEXT, highlightthickness=0, troughcolor=SEP,
