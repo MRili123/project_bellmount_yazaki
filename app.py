@@ -92,7 +92,7 @@ class LoginWindow:
         header_frame.pack(pady=(0, 12))
 
         tk.Label(header_frame, text="▶", bg=BG, fg="#AF151D", font=("Arial", 48, "bold")).pack(side=tk.LEFT, padx=(0, 8))
-        tk.Label(header_frame, text="📷", bg=BG, font=("Arial", 40)).pack(side=tk.LEFT)
+        tk.Label(header_frame, text="📷", bg=BG, fg=TEXT, font=("Arial", 40)).pack(side=tk.LEFT)
 
         tk.Label(logo_frame, text="YAZAKI BELLMOUNTH", bg=BG, fg=TEXT,
                 font=("Arial", 24, "bold")).pack(pady=(8, 2))
