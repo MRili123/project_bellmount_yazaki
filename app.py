@@ -81,17 +81,23 @@ class LoginWindow:
         main.pack(fill=tk.BOTH, expand=True)
 
         # Top spacer
-        tk.Frame(main, bg=BG, height=60).pack()
+        tk.Frame(main, bg=BG, height=40).pack()
 
-        # Logo section - centered
+        # Logo section - Yazaki inspired with camera
         logo_frame = tk.Frame(main, bg=BG)
         logo_frame.pack(fill=tk.X)
 
-        tk.Label(logo_frame, text="●", bg=BG, fg=ACCENT, font=("Arial", 40, "bold")).pack()
-        tk.Label(logo_frame, text="BELLMOUNTH", bg=BG, fg=TEXT,
-                font=("Arial", 28, "bold")).pack(pady=(8, 2))
-        tk.Label(logo_frame, text="Inspection System", bg=BG, fg=TEXT2,
-                font=("Arial", 12)).pack(pady=(0, 40))
+        # Red triangle (Yazaki signature) + Camera (Bellmounth)
+        header_frame = tk.Frame(logo_frame, bg=BG)
+        header_frame.pack(pady=(0, 12))
+
+        tk.Label(header_frame, text="▶", bg=BG, fg="#AF151D", font=("Arial", 48, "bold")).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Label(header_frame, text="📷", bg=BG, font=("Arial", 40)).pack(side=tk.LEFT)
+
+        tk.Label(logo_frame, text="YAZAKI BELLMOUNTH", bg=BG, fg=TEXT,
+                font=("Arial", 24, "bold")).pack(pady=(8, 2))
+        tk.Label(logo_frame, text="Cable Inspection & Measurement System", bg=BG, fg=TEXT2,
+                font=("Arial", 11)).pack(pady=(0, 40))
 
         # Form card
         card = tk.Frame(main, bg=CARD)
@@ -121,11 +127,11 @@ class LoginWindow:
                                    font=("Arial", 10))
         self.error_label.pack(pady=(0, 16))
 
-        # Sign in button
+        # Sign in button - Yazaki red
         tk.Button(card, text="SIGN IN", command=self._login,
-                 bg=ACCENT, fg="#001A3D", font=("Arial", 12, "bold"),
+                 bg="#AF151D", fg="#FFFFFF", font=("Arial", 12, "bold"),
                  relief=tk.FLAT, bd=0, padx=24, pady=12,
-                 activebackground="#00D4FF", activeforeground="#001A3D",
+                 activebackground="#8B0F15", activeforeground="#FFFFFF",
                  cursor="hand2").pack(padx=28, pady=(0, 28), fill=tk.X)
 
         # Footer
