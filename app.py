@@ -166,6 +166,7 @@ class MainApp:
         self.sdk_call_count = 0
         self.annotation_count = self._count_annotations()
         self._tf_model = None
+        self._loop_running = True
 
         self._build_ui()
         self._update_clock()
@@ -227,6 +228,7 @@ class MainApp:
         return body
 
     def _on_closing(self):
+        self._loop_running = False
         if self.cap:
             self.cap.release()
         self.root.destroy()
@@ -723,7 +725,7 @@ class MainApp:
             self.save_btn.config(state=tk.DISABLED, bg=SEP, fg=TEXT2)
 
     def _start_loop(self):
-        if not self.camera_ok:
+        if not self._loop_running or not self.camera_ok:
             return
 
         ret, frame = self.cap.read()
@@ -755,7 +757,8 @@ class MainApp:
 
             self.frame_count += 1
 
-        self.root.after(50, self._start_loop)
+        if self._loop_running:
+            self.root.after(50, self._start_loop)
 
     def run(self):
         self.root.mainloop()
