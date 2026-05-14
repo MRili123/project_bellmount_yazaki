@@ -148,7 +148,7 @@ class LoginWindow:
                  activebackground="#8B0F15", activeforeground="#FFFFFF",
                  cursor="hand2")
         sign_in_btn.pack(padx=28, pady=(0, 28), fill=tk.X)
-        add_hover_effect(sign_in_btn, self.LOGIN_RED, "#8B0F15")
+        add_hover_effect(sign_in_btn, self.LOGIN_RED, "#8B0F15", "#FFFFFF")
 
         # Footer
         tk.Label(card, text="Press Enter to sign in", bg=self.LOGIN_CARD, fg=self.LOGIN_TEXT2,
@@ -174,11 +174,15 @@ class LoginWindow:
         return self.result
 
 # ==================== BUTTON HOVER ANIMATION ====================
-def add_hover_effect(button, normal_color, hover_color):
+def add_hover_effect(button, normal_color, hover_color, text_color=TEXT):
+    normal_state = {"bg": normal_color, "fg": text_color, "relief": tk.FLAT, "bd": 0}
+    hover_state = {"bg": hover_color, "fg": "#FFFFFF", "relief": tk.RAISED, "bd": 2}
+
     def on_enter(event):
-        button.config(bg=hover_color)
+        button.config(**hover_state)
     def on_leave(event):
-        button.config(bg=normal_color)
+        button.config(**normal_state)
+
     button.bind("<Enter>", on_enter)
     button.bind("<Leave>", on_leave)
 
@@ -433,7 +437,7 @@ class MainApp:
                  bg=GREEN, fg="#001A00", font=("Arial", 9, "bold"),
                  relief=tk.FLAT, bd=0, pady=8)
         apply_btn.pack(fill=tk.X, pady=(8, 0))
-        add_hover_effect(apply_btn, GREEN, "#45A049")
+        add_hover_effect(apply_btn, GREEN, "#45A049", "#001A00")
 
         # Actions card
         body = self._card(right, "ACTIONS")
@@ -447,7 +451,7 @@ class MainApp:
                                  bg=AMBER, fg="#1A1000", font=("Arial", 10, "bold"),
                                  relief=tk.FLAT, bd=0, pady=10, state=tk.DISABLED)
         self.save_btn.pack(fill=tk.X)
-        add_hover_effect(self.save_btn, AMBER, "#FF8C00")
+        add_hover_effect(self.save_btn, AMBER, "#FF8C00", "#1A1000")
         self.dataset_lbl = tk.Label(body, text=f"{self.annotation_count} samples",
                                    bg=CARD, fg=TEXT2, font=("Arial", 8))
         self.dataset_lbl.pack(anchor=tk.E, pady=(4, 0))
@@ -460,7 +464,7 @@ class MainApp:
                  bg=GREEN, fg="#001A00", font=("Arial", 9, "bold"),
                  relief=tk.FLAT, bd=0, pady=8)
         led_on_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
-        add_hover_effect(led_on_btn, GREEN, "#45A049")
+        add_hover_effect(led_on_btn, GREEN, "#45A049", "#001A00")
 
         led_off_btn = tk.Button(row, text="LED  OFF", command=self._led_off,
                  bg=SEP, fg=TEXT, font=("Arial", 9, "bold"),
