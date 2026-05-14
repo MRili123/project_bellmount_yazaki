@@ -148,7 +148,7 @@ class LoginWindow:
                  activebackground="#8B0F15", activeforeground="#FFFFFF",
                  cursor="hand2")
         sign_in_btn.pack(padx=28, pady=(0, 28), fill=tk.X)
-        add_hover_effect(sign_in_btn, self.LOGIN_RED, "#8B0F15", "#FFFFFF")
+        add_hover_effect(sign_in_btn, self.LOGIN_RED, self.LOGIN_RED, "#FFFFFF")
 
         # Footer
         tk.Label(card, text="Press Enter to sign in", bg=self.LOGIN_CARD, fg=self.LOGIN_TEXT2,
@@ -323,7 +323,7 @@ class MainApp:
                  relief=tk.FLAT, bd=0, padx=18, activebackground=RED,
                  activeforeground=TEXT)
         quit_btn.pack(side=tk.LEFT, padx=20, pady=12)
-        add_hover_effect(quit_btn, RED, "#8B0F15")
+        add_hover_effect(quit_btn, RED, RED, TEXT)
 
         # Content area
         content = tk.Frame(self.root, bg=BG)
