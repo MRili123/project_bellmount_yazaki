@@ -504,10 +504,6 @@ class MainApp:
             result = self._run_inference(self.current_frame)
             if result:
                 self.p1, self.p2, self.dist_mm = result
-        else:
-            self.p1 = None
-            self.p2 = None
-            self.dist_mm = None
 
     def _run_inference(self, frame):
         if not _TF_AVAILABLE:
