@@ -28,19 +28,19 @@ try:
 except ImportError:
     _TF_AVAILABLE = False
 
-# ==================== COLORS (Dark Pro Palette) ====================
-BG      = "#0C0C12"
-PANEL   = "#101018"
-CARD    = "#15151E"
-BORDER  = "#20202E"
-BTN     = "#0D47A1"
-ACCENT  = "#00BFFF"
-GREEN   = "#00E676"
-RED     = "#FF2D55"
-AMBER   = "#FFB300"
-TEXT    = "#E8E8F0"
-TEXT2   = "#5C5C7A"
-SEP     = "#1C1C28"
+# ==================== COLORS (Light Pro Palette) ====================
+BG      = "#FFFFFF"
+PANEL   = "#F5F5F5"
+CARD    = "#FFFFFF"
+BORDER  = "#E0E0E0"
+BTN     = "#AF151D"
+ACCENT  = "#AF151D"
+GREEN   = "#4CAF50"
+RED     = "#AF151D"
+AMBER   = "#FF9800"
+TEXT    = "#1A1A1A"
+TEXT2   = "#666666"
+SEP     = "#E8E8E8"
 
 # ==================== CONFIG ====================
 CONFIG_FILE = Path(__file__).parent / "config.json"
