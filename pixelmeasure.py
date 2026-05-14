@@ -4,6 +4,7 @@ from dnx64 import DNX64
 import time
 import sys
 import os
+import io
 
 class PixelMeasure:
     def __init__(self, dll_path=None, camera_width=1920):
@@ -19,16 +20,25 @@ class PixelMeasure:
             else:
                 raise FileNotFoundError("DNX64.dll not found. Install Dino-Lite SDK or ensure lib/DNX64.dll exists")
         # Hide SDK spam
-        sys.stdout = open(os.devnull, 'w')
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        try:
+            devnull = open(os.devnull, 'w')
+            sys.stdout = devnull
+            sys.stderr = devnull
 
-        self.dnx = DNX64(dll_path)
-        self.device_index = 0
+            self.dnx = DNX64(dll_path)
+            self.device_index = 0
 
-        if self.dnx.GetVideoDeviceCount() > 0:
-            self.dnx.SetVideoDeviceIndex(self.device_index)
-
-        # Restore stdout
-        sys.stdout = sys.__stdout__
+            if self.dnx.GetVideoDeviceCount() > 0:
+                self.dnx.SetVideoDeviceIndex(self.device_index)
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+            try:
+                devnull.close()
+            except:
+                pass
 
         self.camera_width = camera_width  # Camera frame width in pixels
         self.current_zoom = None
@@ -36,8 +46,13 @@ class PixelMeasure:
         self.last_refresh = time.time()
 
     def update(self):
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
         try:
-            sys.stdout = open(os.devnull, 'w')
+            devnull = open(os.devnull, 'w')
+            sys.stdout = devnull
+            sys.stderr = devnull
+
             zoom = self.dnx.GetAMR(self.device_index)
 
             if zoom and zoom != self.current_zoom:
@@ -59,17 +74,29 @@ class PixelMeasure:
                     pass  # Silently fail if SDK not available
                 self.last_refresh = time.time()
         finally:
-            sys.stdout = sys.__stdout__
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+            try:
+                devnull.close()
+            except:
+                pass
 
     def get_values(self):
         return self.current_zoom, self.mm_per_pixel
 
     def close(self):
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
         try:
-            sys.stdout = open(os.devnull, 'w')
+            devnull = open(os.devnull, 'w')
+            sys.stdout = devnull
+            sys.stderr = devnull
             if hasattr(self, 'dnx'):
                 self.dnx.CloseDevice()
-            sys.stdout = sys.__stdout__
-        except:
-            sys.stdout = sys.__stdout__
-            pass
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+            try:
+                devnull.close()
+            except:
+                pass
