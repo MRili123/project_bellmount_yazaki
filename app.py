@@ -647,22 +647,34 @@ class MainApp:
         dash_segment = max(8, int(16 * min(self.zoom, 1.5)))
         text_size = 0.6 * min(self.zoom, 2)
 
-        # Center of frame for zoom reference
-        center_x, center_y = w / 2, h / 2
+        # Calculate crop region for zoom+pan
+        crop_x1, crop_y1, crop_x2, crop_y2 = 0, 0, w, h
+        if self.zoom > 1:
+            new_w = int(w / self.zoom)
+            new_h = int(h / self.zoom)
+            cx = w // 2 + self.pan_x
+            cy = h // 2 + self.pan_y
+            crop_x1 = max(cx - new_w // 2, 0)
+            crop_y1 = max(cy - new_h // 2, 0)
+            crop_x2 = min(cx + new_w // 2, w)
+            crop_y2 = min(cy + new_h // 2, h)
 
-        # Scale point positions from center based on zoom
-        def scale_point(pt, zoom):
+        # Transform points to account for zoom and pan
+        def scale_point(pt, zoom, crop_x1, crop_y1, crop_x2, crop_y2):
             if pt is None:
                 return None
-            # Move point away from center based on zoom
-            dx = pt[0] - center_x
-            dy = pt[1] - center_y
-            new_x = int(center_x + dx * zoom)
-            new_y = int(center_y + dy * zoom)
-            return (new_x, new_y)
+            crop_w = crop_x2 - crop_x1
+            crop_h = crop_y2 - crop_y1
+            # Map point from original frame to cropped region
+            # Then scale it to fill the display
+            rel_x = (pt[0] - crop_x1) / crop_w if crop_w > 0 else 0
+            rel_y = (pt[1] - crop_y1) / crop_h if crop_h > 0 else 0
+            display_x = int(rel_x * w)
+            display_y = int(rel_y * h)
+            return (display_x, display_y)
 
-        p1_scaled = scale_point(self.p1, self.zoom)
-        p2_scaled = scale_point(self.p2, self.zoom)
+        p1_scaled = scale_point(self.p1, self.zoom, crop_x1, crop_y1, crop_x2, crop_y2)
+        p2_scaled = scale_point(self.p2, self.zoom, crop_x1, crop_y1, crop_x2, crop_y2)
 
         # Draw points and line with scaled positions
         if p1_scaled:
