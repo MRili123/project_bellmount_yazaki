@@ -1598,15 +1598,22 @@ class MainApp:
                 message = result.get("error", "Server connection lost")
                 details = result.get("details", "")
 
+                def on_retry_check():
+                    self.last_health_check_time = 0  # Reset to check immediately
+
                 error_dialog = ErrorDialog(
                     self.root,
                     error_type,
                     message,
                     details,
-                    on_retry=lambda: self._start_loop(),
+                    on_retry=on_retry_check,
                     on_exit=self._on_closing
                 )
                 error_dialog.show()
+                try:
+                    error_dialog.window.destroy()
+                except:
+                    pass
 
         if self._loop_running:
             self.root.after(50, self._start_loop)
