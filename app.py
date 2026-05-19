@@ -63,7 +63,7 @@ class ErrorDialog:
     def __init__(self, parent, error_type, message, details="", on_retry=None, on_change_url=None, on_exit=None):
         self.window = tk.Toplevel(parent)
         self.window.title("Connection Error")
-        self.window.geometry("500x400")
+        self.window.geometry("600x500")
         self.window.configure(bg="#FFFFFF")
         self.window.resizable(False, False)
         self.on_retry = on_retry
@@ -71,61 +71,63 @@ class ErrorDialog:
         self.on_exit = on_exit
         self.result = None
 
-        # Color scheme based on error type
+        # Color scheme based on error type - using red and white
         error_colors = {
-            "no_internet": ("#FF9800", "NO INTERNET"),
-            "server_down": ("#F44336", "SERVER UNREACHABLE"),
-            "server_error": ("#FF5722", "SERVER ERROR"),
-            "auth_error": ("#F44336", "AUTHENTICATION FAILED"),
-            "unknown": ("#FF9800", "ERROR")
+            "no_internet": ("#AF151D", "NO INTERNET", "🌐"),
+            "server_down": ("#AF151D", "SERVER UNREACHABLE", "⚠"),
+            "server_error": ("#AF151D", "SERVER ERROR", "⚠"),
+            "auth_error": ("#AF151D", "AUTHENTICATION FAILED", "🔒"),
+            "unknown": ("#AF151D", "ERROR", "⚠")
         }
-        color, title_text = error_colors.get(error_type, ("#FF9800", "ERROR"))
+        color, title_text, icon_char = error_colors.get(error_type, ("#AF151D", "ERROR", "⚠"))
 
         main = tk.Frame(self.window, bg="#FFFFFF")
         main.pack(fill=tk.BOTH, expand=True, padx=30, pady=30)
 
-        # Icon and title
+        # Large icon - bigger and more prominent
         icon_frame = tk.Frame(main, bg="#FFFFFF")
-        icon_frame.pack(fill=tk.X, pady=(0, 20))
-        tk.Label(icon_frame, text="⚠", font=("Arial", 32), fg=color, bg="#FFFFFF").pack(side=tk.LEFT, padx=(0, 10))
-        tk.Label(icon_frame, text=title_text, font=("Arial", 16, "bold"), fg=color, bg="#FFFFFF").pack(side=tk.LEFT)
+        icon_frame.pack(fill=tk.X, pady=(0, 20), anchor=tk.CENTER)
+        tk.Label(icon_frame, text=icon_char, font=("Arial", 72), fg=color, bg="#FFFFFF").pack()
+
+        # Title with red color
+        tk.Label(main, text=title_text, font=("Arial", 18, "bold"), fg=color, bg="#FFFFFF").pack(anchor=tk.CENTER, pady=(0, 15))
 
         # Message
-        tk.Label(main, text=message, font=("Arial", 11), fg="#333333", bg="#FFFFFF", wraplength=400, justify=tk.LEFT).pack(fill=tk.X, pady=(0, 20))
+        tk.Label(main, text=message, font=("Arial", 12), fg="#333333", bg="#FFFFFF", wraplength=480, justify=tk.CENTER).pack(fill=tk.X, pady=(0, 20))
 
         # Details section
         self.details_frame = tk.Frame(main, bg="#F5F5F5", relief=tk.SUNKEN, bd=1)
         self.details_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
         self.details_frame.pack_propagate(False)
 
-        details_text = tk.Text(self.details_frame, font=("Consolas", 8), bg="#F5F5F5", fg="#666666", height=8, width=50, relief=tk.FLAT, bd=0)
+        details_text = tk.Text(self.details_frame, font=("Consolas", 8), bg="#F5F5F5", fg="#666666", height=6, width=50, relief=tk.FLAT, bd=0)
         details_text.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
         details_text.insert(tk.END, details)
         details_text.config(state=tk.DISABLED)
 
-        # Buttons
+        # Buttons - Red and white theme
         btn_frame = tk.Frame(main, bg="#FFFFFF")
         btn_frame.pack(fill=tk.X, pady=(0, 0))
 
         if on_retry:
             retry_btn = tk.Button(btn_frame, text="RETRY", command=self._on_retry,
-                                 bg="#4CAF50", fg="#FFFFFF", font=("Arial", 10, "bold"),
-                                 relief=tk.FLAT, bd=0, padx=16, pady=8)
-            retry_btn.pack(side=tk.LEFT, padx=(0, 8))
-            add_hover_effect(retry_btn, "#4CAF50", "#45A049", "#FFFFFF")
+                                 bg="#AF151D", fg="#FFFFFF", font=("Arial", 11, "bold"),
+                                 relief=tk.FLAT, bd=0, padx=20, pady=10)
+            retry_btn.pack(side=tk.LEFT, padx=(0, 10))
+            add_hover_effect(retry_btn, "#AF151D", "#8B0F15", "#FFFFFF")
 
         if on_change_url:
             url_btn = tk.Button(btn_frame, text="CHANGE URL", command=self._on_change_url,
-                               bg="#2196F3", fg="#FFFFFF", font=("Arial", 10, "bold"),
-                               relief=tk.FLAT, bd=0, padx=16, pady=8)
-            url_btn.pack(side=tk.LEFT, padx=(0, 8))
-            add_hover_effect(url_btn, "#2196F3", "#1976D2", "#FFFFFF")
+                               bg="#666666", fg="#FFFFFF", font=("Arial", 11, "bold"),
+                               relief=tk.FLAT, bd=0, padx=20, pady=10)
+            url_btn.pack(side=tk.LEFT, padx=(0, 10))
+            add_hover_effect(url_btn, "#666666", "#555555", "#FFFFFF")
 
         exit_btn = tk.Button(btn_frame, text="EXIT", command=self._on_exit,
-                            bg="#F44336", fg="#FFFFFF", font=("Arial", 10, "bold"),
-                            relief=tk.FLAT, bd=0, padx=16, pady=8)
+                            bg="#AF151D", fg="#FFFFFF", font=("Arial", 11, "bold"),
+                            relief=tk.FLAT, bd=0, padx=20, pady=10)
         exit_btn.pack(side=tk.RIGHT)
-        add_hover_effect(exit_btn, "#F44336", "#D32F2F", "#FFFFFF")
+        add_hover_effect(exit_btn, "#AF151D", "#8B0F15", "#FFFFFF")
 
     def _on_retry(self):
         self.result = "retry"
