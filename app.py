@@ -1599,11 +1599,9 @@ if __name__ == "__main__":
             user_action = [None]
 
             def on_retry():
-                print("DEBUG: on_retry called")
                 user_action[0] = "retry"
 
             def on_exit():
-                print("DEBUG: on_exit called")
                 user_action[0] = "exit"
 
             error_dialog = ErrorDialog(
@@ -1614,19 +1612,15 @@ if __name__ == "__main__":
                 on_retry=on_retry,
                 on_exit=on_exit
             )
-            print("DEBUG: showing error dialog")
             error_dialog.show()
-            print(f"DEBUG: dialog closed, user_action={user_action[0]}")
             try:
                 error_root.destroy()
             except:
                 pass
 
             if user_action[0] == "exit":
-                print("DEBUG: exiting")
                 sys.exit(0)
             else:
-                print("DEBUG: retrying")
                 # user_action[0] == "retry" - continue loop to retry
                 continue
 
@@ -1648,15 +1642,12 @@ if __name__ == "__main__":
         user_action = [None]  # Use list to capture choice in closure
 
         def on_retry():
-            print("DEBUG: on_retry called (api)")
             user_action[0] = "retry"
 
         def on_change_url():
-            print("DEBUG: on_change_url called")
             user_action[0] = "change_url"
 
         def on_exit():
-            print("DEBUG: on_exit called (api)")
             user_action[0] = "exit"
 
         error_dialog = ErrorDialog(
@@ -1668,9 +1659,7 @@ if __name__ == "__main__":
             on_change_url=on_change_url,
             on_exit=on_exit
         )
-        print("DEBUG: showing error dialog (api)")
         error_dialog.show()
-        print(f"DEBUG: dialog closed, user_action={user_action[0]}")
         try:
             error_root.destroy()
         except:
@@ -1678,10 +1667,8 @@ if __name__ == "__main__":
 
         # Handle user's choice
         if user_action[0] == "retry":
-            print("DEBUG: retrying (api)")
             continue  # Retry connection check
         elif user_action[0] == "change_url":
-            print("DEBUG: changing url")
             setup = SetupWindow()
             new_url = setup.show()
             if new_url:
