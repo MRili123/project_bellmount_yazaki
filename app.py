@@ -1643,6 +1643,752 @@ class MainApp:
     def run(self):
         self.root.mainloop()
 
+# ==================== ADMIN APP ====================
+class AdminApp:
+    def __init__(self, username: str, user_id: str, api_client: APIClient):
+        self.username = username
+        self.user_id = user_id
+        self.api_client = api_client
+
+        self.root = tk.Tk()
+        self.root.title("Bellmounth Admin Panel")
+        self.root.geometry("1280x800")
+        self.root.configure(bg=BG)
+        self.root.state('zoomed')
+
+        self.current_page = "users"
+        self.page_buttons = {}
+
+        self._build_ui()
+
+    def _build_ui(self):
+        # Header bar
+        top = tk.Frame(self.root, bg=PANEL, height=58)
+        top.pack(fill=tk.X, side=tk.TOP)
+        top.pack_propagate(False)
+
+        # Logo
+        logo_path = Path(__file__).parent / "logo.png"
+        if logo_path.exists():
+            try:
+                logo_img = Image.open(str(logo_path))
+                logo_img = logo_img.resize((45, 45), Image.Resampling.LANCZOS)
+                logo_photo = ImageTk.PhotoImage(logo_img)
+                logo_lbl = tk.Label(top, image=logo_photo, bg=PANEL)
+                logo_lbl.image = logo_photo
+                logo_lbl.pack(side=tk.LEFT, padx=10)
+            except:
+                pass
+
+        tk.Label(top, text="Admin Panel", bg=PANEL, fg=TEXT2, font=("Arial", 11, "bold")).pack(side=tk.LEFT, padx=10)
+
+        # Spacer
+        tk.Frame(top, bg=PANEL).pack(fill=tk.X, expand=True)
+
+        # Username and clock
+        tk.Label(top, text=self.username, bg=PANEL, fg=TEXT, font=("Arial", 10)).pack(side=tk.LEFT, padx=10)
+        tk.Frame(top, bg=BORDER, width=1, height=30).pack(side=tk.LEFT, padx=5)
+
+        self.clock_lbl = tk.Label(top, text="", bg=PANEL, fg=TEXT2, font=("Arial", 10))
+        self.clock_lbl.pack(side=tk.LEFT, padx=10)
+        self._update_clock()
+
+        tk.Frame(top, bg=BORDER, width=1, height=30).pack(side=tk.LEFT, padx=5)
+
+        quit_btn = tk.Button(top, text="QUIT", command=self._on_closing, bg=RED, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=6)
+        quit_btn.pack(side=tk.LEFT, padx=10)
+        add_hover_effect(quit_btn, RED, RED, "#FFFFFF")
+
+        # Navbar
+        navbar = tk.Frame(self.root, bg=PANEL, height=45)
+        navbar.pack(fill=tk.X, side=tk.TOP)
+        navbar.pack_propagate(False)
+
+        pages = [
+            ("USERS", "users", self._show_users_page),
+            ("MACHINES", "machines", self._show_machines_page),
+            ("SWITCHES", "switches", self._show_switches_page),
+            ("CAPTURES", "captures", self._show_captures_page),
+        ]
+
+        for label, page_id, callback in pages:
+            btn = tk.Button(navbar, text=label,
+                          command=lambda p=page_id, c=callback: self._switch_page(p, c),
+                          bg=PANEL, fg=TEXT2, font=("Arial", 10, "bold"),
+                          relief=tk.FLAT, bd=0, padx=16, pady=10)
+            btn.pack(side=tk.LEFT, padx=4)
+            self.page_buttons[page_id] = btn
+            add_hover_effect(btn, PANEL, SEP, TEXT)
+
+        tk.Frame(navbar, bg=BORDER, height=1).pack(fill=tk.X, side=tk.BOTTOM)
+
+        # Content container
+        self.content_container = tk.Frame(self.root, bg=BG)
+        self.content_container.pack(fill=tk.BOTH, expand=True)
+
+        # Show initial page
+        self._switch_page("users", self._show_users_page)
+
+    def _switch_page(self, page_id, callback):
+        self.current_page = page_id
+        for btn_id, btn in self.page_buttons.items():
+            btn.config(bg=ACCENT if btn_id == page_id else PANEL,
+                      fg="#FFFFFF" if btn_id == page_id else TEXT2)
+
+        for widget in self.content_container.winfo_children():
+            widget.destroy()
+
+        self.root.update_idletasks()
+        callback()
+
+    def _update_clock(self):
+        now = datetime.now().strftime("%H:%M:%S")
+        self.clock_lbl.config(text=now)
+        self.root.after(1000, self._update_clock)
+
+    def _on_closing(self):
+        self.root.destroy()
+
+    def _show_users_page(self):
+        frame = tk.Frame(self.content_container, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Title
+        tk.Label(frame, text="USER MANAGEMENT", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        # Fetch users
+        result = self.api_client.admin_get_users()
+        if result.get("ok"):
+            users = result.get("data", [])
+        else:
+            tk.Label(frame, text=f"✕ {result.get('error', 'Failed to load users')}", bg=BG, fg=RED, font=("Arial", 11)).pack(pady=20)
+            return
+
+        # Toolbar
+        toolbar = tk.Frame(frame, bg=BG)
+        toolbar.pack(fill=tk.X, pady=(0, 20))
+
+        # Add button
+        add_btn = tk.Button(toolbar, text="+ ADD USER", command=self._add_user_dialog,
+                          bg=ACCENT, fg="#FFFFFF", font=("Arial", 11, "bold"),
+                          relief=tk.FLAT, bd=0, padx=20, pady=8)
+        add_btn.pack(side=tk.RIGHT)
+        add_hover_effect(add_btn, ACCENT, ACCENT, "#FFFFFF")
+
+        # Table
+        table_frame = tk.Frame(frame, bg=BORDER, relief=tk.SUNKEN, bd=1)
+        table_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Header
+        header = tk.Frame(table_frame, bg=PANEL)
+        header.pack(fill=tk.X)
+
+        cols = [("USERNAME", 25), ("ROLE", 15), ("EMAIL", 30), ("STATUS", 12), ("CREATED", 18)]
+        for col_name, width in cols:
+            tk.Label(header, text=col_name, bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold"), width=width, anchor="w").pack(side=tk.LEFT, padx=10, pady=10)
+
+        tk.Frame(table_frame, bg=BORDER, height=1).pack(fill=tk.X)
+
+        # Rows
+        canvas = tk.Canvas(table_frame, bg=BG, highlightthickness=0, height=400)
+        scrollbar = tk.Scrollbar(table_frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=BG)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        for i, user in enumerate(users):
+            row_bg = PANEL if i % 2 == 0 else BG
+            row = tk.Frame(scrollable_frame, bg=row_bg)
+            row.pack(fill=tk.X)
+
+            tk.Label(row, text=user.get("username", ""), bg=row_bg, fg=TEXT, font=("Arial", 10), width=25, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+            tk.Label(row, text=user.get("role", ""), bg=row_bg, fg=TEXT, font=("Arial", 10), width=15, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+            tk.Label(row, text=user.get("email", ""), bg=row_bg, fg=TEXT, font=("Arial", 10), width=30, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+            status_text = "Active" if user.get("is_active") else "Inactive"
+            status_color = GREEN if user.get("is_active") else RED
+            tk.Label(row, text=status_text, bg=row_bg, fg=status_color, font=("Arial", 10, "bold"), width=12, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+            created_str = user.get("created_at", "")[:10] if user.get("created_at") else ""
+            tk.Label(row, text=created_str, bg=row_bg, fg=TEXT2, font=("Arial", 10), width=18, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+            # Action buttons
+            action_frame = tk.Frame(row, bg=row_bg)
+            action_frame.pack(side=tk.RIGHT, padx=10, pady=8)
+
+            toggle_text = "Deactivate" if user.get("is_active") else "Activate"
+            toggle_btn = tk.Button(action_frame, text=toggle_text, font=("Arial", 9),
+                                  command=lambda uid=user.get("id"), act=user.get("is_active"): self._toggle_user(uid, act),
+                                  bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, padx=12, pady=4)
+            toggle_btn.pack(side=tk.LEFT, padx=4)
+            add_hover_effect(toggle_btn, PANEL, SEP, TEXT)
+
+            delete_btn = tk.Button(action_frame, text="Delete", font=("Arial", 9),
+                                  command=lambda uid=user.get("id"), un=user.get("username"): self._delete_user(uid, un),
+                                  bg=RED, fg="#FFFFFF", relief=tk.FLAT, bd=0, padx=12, pady=4)
+            delete_btn.pack(side=tk.LEFT, padx=4)
+            add_hover_effect(delete_btn, RED, RED, "#FFFFFF")
+
+        canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
+
+    def _show_machines_page(self):
+        frame = tk.Frame(self.content_container, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text="MACHINE MANAGEMENT", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        result = self.api_client.admin_get_machines()
+        if result.get("ok"):
+            machines = result.get("data", [])
+        else:
+            tk.Label(frame, text=f"✕ {result.get('error', 'Failed to load machines')}", bg=BG, fg=RED, font=("Arial", 11)).pack(pady=20)
+            return
+
+        toolbar = tk.Frame(frame, bg=BG)
+        toolbar.pack(fill=tk.X, pady=(0, 20))
+
+        add_btn = tk.Button(toolbar, text="+ REGISTER MACHINE", command=self._add_machine_dialog,
+                          bg=ACCENT, fg="#FFFFFF", font=("Arial", 11, "bold"),
+                          relief=tk.FLAT, bd=0, padx=20, pady=8)
+        add_btn.pack(side=tk.RIGHT)
+        add_hover_effect(add_btn, ACCENT, ACCENT, "#FFFFFF")
+
+        table_frame = tk.Frame(frame, bg=BORDER, relief=tk.SUNKEN, bd=1)
+        table_frame.pack(fill=tk.BOTH, expand=True)
+
+        header = tk.Frame(table_frame, bg=PANEL)
+        header.pack(fill=tk.X)
+
+        cols = [("MACHINE NAME", 25), ("LOCATION", 25), ("FIRMWARE", 15), ("STATUS", 12), ("CREATED", 18)]
+        for col_name, width in cols:
+            tk.Label(header, text=col_name, bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold"), width=width, anchor="w").pack(side=tk.LEFT, padx=10, pady=10)
+
+        tk.Frame(table_frame, bg=BORDER, height=1).pack(fill=tk.X)
+
+        canvas = tk.Canvas(table_frame, bg=BG, highlightthickness=0, height=400)
+        scrollbar = tk.Scrollbar(table_frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=BG)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        for i, machine in enumerate(machines):
+            row_bg = PANEL if i % 2 == 0 else BG
+            row = tk.Frame(scrollable_frame, bg=row_bg)
+            row.pack(fill=tk.X)
+
+            tk.Label(row, text=machine.get("machine_name", ""), bg=row_bg, fg=TEXT, font=("Arial", 10), width=25, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+            tk.Label(row, text=machine.get("location", ""), bg=row_bg, fg=TEXT, font=("Arial", 10), width=25, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+            tk.Label(row, text=machine.get("firmware_version", ""), bg=row_bg, fg=TEXT, font=("Arial", 10), width=15, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+            status_text = "Connected" if machine.get("is_connected") else "Offline"
+            status_color = GREEN if machine.get("is_connected") else TEXT2
+            tk.Label(row, text=status_text, bg=row_bg, fg=status_color, font=("Arial", 10, "bold"), width=12, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+            created_str = machine.get("created_at", "")[:10] if machine.get("created_at") else ""
+            tk.Label(row, text=created_str, bg=row_bg, fg=TEXT2, font=("Arial", 10), width=18, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+            action_frame = tk.Frame(row, bg=row_bg)
+            action_frame.pack(side=tk.RIGHT, padx=10, pady=8)
+
+            delete_btn = tk.Button(action_frame, text="Delete", font=("Arial", 9),
+                                  command=lambda mid=machine.get("id"), mn=machine.get("machine_name"): self._delete_machine(mid, mn),
+                                  bg=RED, fg="#FFFFFF", relief=tk.FLAT, bd=0, padx=12, pady=4)
+            delete_btn.pack()
+            add_hover_effect(delete_btn, RED, RED, "#FFFFFF")
+
+        canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
+
+    def _show_switches_page(self):
+        frame = tk.Frame(self.content_container, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text="SWITCH MANAGEMENT", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        result = self.api_client.get_switches()
+        if result.get("ok"):
+            switches = result.get("data", [])
+        else:
+            tk.Label(frame, text=f"✕ {result.get('error', 'Failed to load switches')}", bg=BG, fg=RED, font=("Arial", 11)).pack(pady=20)
+            return
+
+        toolbar = tk.Frame(frame, bg=BG)
+        toolbar.pack(fill=tk.X, pady=(0, 20))
+
+        add_btn = tk.Button(toolbar, text="+ ADD SWITCH", command=self._add_switch_dialog,
+                          bg=ACCENT, fg="#FFFFFF", font=("Arial", 11, "bold"),
+                          relief=tk.FLAT, bd=0, padx=20, pady=8)
+        add_btn.pack(side=tk.RIGHT)
+        add_hover_effect(add_btn, ACCENT, ACCENT, "#FFFFFF")
+
+        table_frame = tk.Frame(frame, bg=BORDER, relief=tk.SUNKEN, bd=1)
+        table_frame.pack(fill=tk.BOTH, expand=True)
+
+        header = tk.Frame(table_frame, bg=PANEL)
+        header.pack(fill=tk.X)
+
+        cols = [("NAME", 20), ("CABLE TYPE", 16), ("EXPECTED (mm)", 14), ("TOL MIN", 12), ("TOL MAX", 12)]
+        for col_name, width in cols:
+            tk.Label(header, text=col_name, bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold"), width=width, anchor="w").pack(side=tk.LEFT, padx=10, pady=10)
+
+        tk.Frame(table_frame, bg=BORDER, height=1).pack(fill=tk.X)
+
+        canvas = tk.Canvas(table_frame, bg=BG, highlightthickness=0, height=400)
+        scrollbar = tk.Scrollbar(table_frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=BG)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        for i, switch in enumerate(switches):
+            row_bg = PANEL if i % 2 == 0 else BG
+            row = tk.Frame(scrollable_frame, bg=row_bg)
+            row.pack(fill=tk.X)
+
+            tk.Label(row, text=switch.get("switch_name", ""), bg=row_bg, fg=TEXT, font=("Arial", 10), width=20, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+            tk.Label(row, text=switch.get("cable_type", ""), bg=row_bg, fg=TEXT, font=("Arial", 10), width=16, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+            tk.Label(row, text=f"{switch.get('expected_diameter_mm', 0)}", bg=row_bg, fg=TEXT, font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+            tk.Label(row, text=f"{switch.get('tolerance_min', 0)}", bg=row_bg, fg=TEXT, font=("Arial", 10), width=12, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+            tk.Label(row, text=f"{switch.get('tolerance_max', 0)}", bg=row_bg, fg=TEXT, font=("Arial", 10), width=12, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+            action_frame = tk.Frame(row, bg=row_bg)
+            action_frame.pack(side=tk.RIGHT, padx=10, pady=8)
+
+            edit_btn = tk.Button(action_frame, text="Edit", font=("Arial", 9),
+                                command=lambda sw=switch: self._edit_switch_dialog(sw),
+                                bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, padx=12, pady=4)
+            edit_btn.pack(side=tk.LEFT, padx=4)
+            add_hover_effect(edit_btn, PANEL, SEP, TEXT)
+
+            delete_btn = tk.Button(action_frame, text="Delete", font=("Arial", 9),
+                                  command=lambda sid=switch.get("id"), sn=switch.get("switch_name"): self._delete_switch(sid, sn),
+                                  bg=RED, fg="#FFFFFF", relief=tk.FLAT, bd=0, padx=12, pady=4)
+            delete_btn.pack(side=tk.LEFT, padx=4)
+            add_hover_effect(delete_btn, RED, RED, "#FFFFFF")
+
+        canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
+
+    def _show_captures_page(self):
+        frame = tk.Frame(self.content_container, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text="CAPTURES DASHBOARD", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        result = self.api_client.admin_get_captures()
+        if result.get("ok"):
+            captures = result.get("data", [])
+        else:
+            tk.Label(frame, text=f"✕ {result.get('error', 'Failed to load captures')}", bg=BG, fg=RED, font=("Arial", 11)).pack(pady=20)
+            return
+
+        # Get annoteurs for assignment
+        annoteurs_result = self.api_client.admin_get_users(role="annoteur")
+        annoteurs = annoteurs_result.get("data", []) if annoteurs_result.get("ok") else []
+
+        table_frame = tk.Frame(frame, bg=BORDER, relief=tk.SUNKEN, bd=1)
+        table_frame.pack(fill=tk.BOTH, expand=True)
+
+        header = tk.Frame(table_frame, bg=PANEL)
+        header.pack(fill=tk.X)
+
+        cols = [("ID", 10), ("MACHINE", 14), ("SWITCH", 14), ("VALUE (mm)", 12), ("STATUS", 12), ("ANNOTEUR", 16)]
+        for col_name, width in cols:
+            tk.Label(header, text=col_name, bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold"), width=width, anchor="w").pack(side=tk.LEFT, padx=10, pady=10)
+
+        tk.Frame(table_frame, bg=BORDER, height=1).pack(fill=tk.X)
+
+        canvas = tk.Canvas(table_frame, bg=BG, highlightthickness=0, height=400)
+        scrollbar = tk.Scrollbar(table_frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=BG)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        for i, capture in enumerate(captures):
+            row_bg = PANEL if i % 2 == 0 else BG
+            row = tk.Frame(scrollable_frame, bg=row_bg)
+            row.pack(fill=tk.X)
+
+            cap_id = str(capture.get("id", ""))[:8]
+            tk.Label(row, text=cap_id, bg=row_bg, fg=TEXT2, font=("Arial", 9), width=10, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+            tk.Label(row, text=str(capture.get("machine_id", ""))[:14], bg=row_bg, fg=TEXT, font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+            tk.Label(row, text=str(capture.get("switch_id", ""))[:14], bg=row_bg, fg=TEXT, font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+            tk.Label(row, text=f"{capture.get('measured_distance_mm', 0):.2f}", bg=row_bg, fg=TEXT, font=("Arial", 10), width=12, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+            if capture.get("annoteur_approved"):
+                status_color = GREEN
+                status_text = "Approved"
+            elif capture.get("annoteur_id"):
+                status_color = AMBER
+                status_text = "Assigned"
+            else:
+                status_color = TEXT2
+                status_text = "Pending"
+
+            tk.Label(row, text=status_text, bg=row_bg, fg=status_color, font=("Arial", 10, "bold"), width=12, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+            annoteur_name = ""
+            if capture.get("annoteur_id"):
+                for ann in annoteurs:
+                    if ann.get("id") == capture.get("annoteur_id"):
+                        annoteur_name = ann.get("username", "")
+                        break
+
+            tk.Label(row, text=annoteur_name[:16], bg=row_bg, fg=TEXT, font=("Arial", 10), width=16, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+            action_frame = tk.Frame(row, bg=row_bg)
+            action_frame.pack(side=tk.RIGHT, padx=10, pady=8)
+
+            if not capture.get("annoteur_id"):
+                assign_btn = tk.Button(action_frame, text="Assign", font=("Arial", 9),
+                                      command=lambda cid=capture.get("id"): self._assign_capture_dialog(cid, annoteurs),
+                                      bg=ACCENT, fg="#FFFFFF", relief=tk.FLAT, bd=0, padx=12, pady=4)
+                assign_btn.pack()
+                add_hover_effect(assign_btn, ACCENT, ACCENT, "#FFFFFF")
+
+        canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
+
+    def _add_user_dialog(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Add User")
+        dialog.geometry("400x300")
+        dialog.configure(bg=BG)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        frame = tk.Frame(dialog, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text="Add New User", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        tk.Label(frame, text="Username", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        username_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        username_entry.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(frame, text="Password", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        password_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, show="●", relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        password_entry.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(frame, text="Email", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        email_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        email_entry.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(frame, text="Role", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        role_var = tk.StringVar(value="annoteur")
+        role_menu = tk.OptionMenu(frame, role_var, "machine_user", "annoteur", "admin")
+        role_menu.pack(fill=tk.X, pady=(0, 20))
+
+        btn_frame = tk.Frame(frame, bg=BG)
+        btn_frame.pack(fill=tk.X)
+
+        cancel_btn = tk.Button(btn_frame, text="CANCEL", command=dialog.destroy, bg=PANEL, fg=TEXT, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        cancel_btn.pack(side=tk.LEFT, padx=(0, 10))
+        add_hover_effect(cancel_btn, PANEL, SEP, TEXT)
+
+        def submit():
+            result = self.api_client.admin_create_user(
+                username_entry.get(),
+                password_entry.get(),
+                email_entry.get(),
+                role_var.get()
+            )
+            if result.get("ok"):
+                dialog.destroy()
+                self._switch_page("users", self._show_users_page)
+            else:
+                messagebox.showerror("Error", result.get("error", "Failed to create user"))
+
+        submit_btn = tk.Button(btn_frame, text="SUBMIT", command=submit, bg=ACCENT, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        submit_btn.pack(side=tk.LEFT)
+        add_hover_effect(submit_btn, ACCENT, ACCENT, "#FFFFFF")
+
+    def _add_machine_dialog(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Register Machine")
+        dialog.geometry("400x300")
+        dialog.configure(bg=BG)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        frame = tk.Frame(dialog, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text="Register Machine", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        tk.Label(frame, text="Machine Name", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        name_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        name_entry.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(frame, text="Password", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        password_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, show="●", relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        password_entry.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(frame, text="Location", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        location_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        location_entry.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(frame, text="Firmware Version", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        firmware_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        firmware_entry.pack(fill=tk.X, pady=(0, 20))
+
+        btn_frame = tk.Frame(frame, bg=BG)
+        btn_frame.pack(fill=tk.X)
+
+        cancel_btn = tk.Button(btn_frame, text="CANCEL", command=dialog.destroy, bg=PANEL, fg=TEXT, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        cancel_btn.pack(side=tk.LEFT, padx=(0, 10))
+        add_hover_effect(cancel_btn, PANEL, SEP, TEXT)
+
+        def submit():
+            result = self.api_client.admin_create_machine(
+                name_entry.get(),
+                password_entry.get(),
+                location_entry.get(),
+                firmware_entry.get()
+            )
+            if result.get("ok"):
+                dialog.destroy()
+                self._switch_page("machines", self._show_machines_page)
+            else:
+                messagebox.showerror("Error", result.get("error", "Failed to create machine"))
+
+        submit_btn = tk.Button(btn_frame, text="SUBMIT", command=submit, bg=ACCENT, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        submit_btn.pack(side=tk.LEFT)
+        add_hover_effect(submit_btn, ACCENT, ACCENT, "#FFFFFF")
+
+    def _add_switch_dialog(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Add Switch")
+        dialog.geometry("400x380")
+        dialog.configure(bg=BG)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        frame = tk.Frame(dialog, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text="Add Switch", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        tk.Label(frame, text="Switch Name", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        name_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        name_entry.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(frame, text="Cable Type", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        type_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        type_entry.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(frame, text="Expected Diameter (mm)", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        expected_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        expected_entry.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(frame, text="Tolerance Min (mm)", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        min_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        min_entry.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(frame, text="Tolerance Max (mm)", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        max_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        max_entry.pack(fill=tk.X, pady=(0, 20))
+
+        btn_frame = tk.Frame(frame, bg=BG)
+        btn_frame.pack(fill=tk.X)
+
+        cancel_btn = tk.Button(btn_frame, text="CANCEL", command=dialog.destroy, bg=PANEL, fg=TEXT, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        cancel_btn.pack(side=tk.LEFT, padx=(0, 10))
+        add_hover_effect(cancel_btn, PANEL, SEP, TEXT)
+
+        def submit():
+            try:
+                result = self.api_client.admin_create_switch(
+                    name_entry.get(),
+                    float(expected_entry.get()),
+                    float(min_entry.get()),
+                    float(max_entry.get()),
+                    type_entry.get()
+                )
+                if result.get("ok"):
+                    dialog.destroy()
+                    self._switch_page("switches", self._show_switches_page)
+                else:
+                    messagebox.showerror("Error", result.get("error", "Failed to create switch"))
+            except ValueError:
+                messagebox.showerror("Error", "Invalid number format")
+
+        submit_btn = tk.Button(btn_frame, text="SUBMIT", command=submit, bg=ACCENT, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        submit_btn.pack(side=tk.LEFT)
+        add_hover_effect(submit_btn, ACCENT, ACCENT, "#FFFFFF")
+
+    def _edit_switch_dialog(self, switch_data):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Edit Switch")
+        dialog.geometry("400x380")
+        dialog.configure(bg=BG)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        frame = tk.Frame(dialog, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text="Edit Switch", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        tk.Label(frame, text="Switch Name", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        name_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        name_entry.insert(0, switch_data.get("switch_name", ""))
+        name_entry.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(frame, text="Cable Type", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        type_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        type_entry.insert(0, switch_data.get("cable_type", ""))
+        type_entry.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(frame, text="Expected Diameter (mm)", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        expected_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        expected_entry.insert(0, str(switch_data.get("expected_diameter_mm", "")))
+        expected_entry.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(frame, text="Tolerance Min (mm)", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        min_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        min_entry.insert(0, str(switch_data.get("tolerance_min", "")))
+        min_entry.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(frame, text="Tolerance Max (mm)", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        max_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        max_entry.insert(0, str(switch_data.get("tolerance_max", "")))
+        max_entry.pack(fill=tk.X, pady=(0, 20))
+
+        btn_frame = tk.Frame(frame, bg=BG)
+        btn_frame.pack(fill=tk.X)
+
+        cancel_btn = tk.Button(btn_frame, text="CANCEL", command=dialog.destroy, bg=PANEL, fg=TEXT, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        cancel_btn.pack(side=tk.LEFT, padx=(0, 10))
+        add_hover_effect(cancel_btn, PANEL, SEP, TEXT)
+
+        def submit():
+            try:
+                result = self.api_client.admin_update_switch(
+                    switch_data.get("id"),
+                    switch_name=name_entry.get(),
+                    cable_type=type_entry.get(),
+                    expected_diameter_mm=float(expected_entry.get()),
+                    tolerance_min=float(min_entry.get()),
+                    tolerance_max=float(max_entry.get())
+                )
+                if result.get("ok"):
+                    dialog.destroy()
+                    self._switch_page("switches", self._show_switches_page)
+                else:
+                    messagebox.showerror("Error", result.get("error", "Failed to update switch"))
+            except ValueError:
+                messagebox.showerror("Error", "Invalid number format")
+
+        submit_btn = tk.Button(btn_frame, text="UPDATE", command=submit, bg=ACCENT, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        submit_btn.pack(side=tk.LEFT)
+        add_hover_effect(submit_btn, ACCENT, ACCENT, "#FFFFFF")
+
+    def _assign_capture_dialog(self, capture_id, annoteurs):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Assign Capture")
+        dialog.geometry("300x150")
+        dialog.configure(bg=BG)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        frame = tk.Frame(dialog, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text="Assign Capture", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        tk.Label(frame, text="Select Annoteur", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 10))
+
+        annoteur_names = [ann.get("username", "") for ann in annoteurs]
+        annoteur_ids = [ann.get("id", "") for ann in annoteurs]
+
+        annoteur_var = tk.StringVar(value=annoteur_names[0] if annoteur_names else "")
+        annoteur_menu = tk.OptionMenu(frame, annoteur_var, *annoteur_names)
+        annoteur_menu.pack(fill=tk.X, pady=(0, 20))
+
+        btn_frame = tk.Frame(frame, bg=BG)
+        btn_frame.pack(fill=tk.X)
+
+        cancel_btn = tk.Button(btn_frame, text="CANCEL", command=dialog.destroy, bg=PANEL, fg=TEXT, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        cancel_btn.pack(side=tk.LEFT, padx=(0, 10))
+        add_hover_effect(cancel_btn, PANEL, SEP, TEXT)
+
+        def submit():
+            selected_name = annoteur_var.get()
+            try:
+                idx = annoteur_names.index(selected_name)
+                annoteur_id = annoteur_ids[idx]
+                result = self.api_client.admin_assign_capture(capture_id, annoteur_id)
+                if result.get("ok"):
+                    dialog.destroy()
+                    self._switch_page("captures", self._show_captures_page)
+                else:
+                    messagebox.showerror("Error", result.get("error", "Failed to assign"))
+            except ValueError:
+                messagebox.showerror("Error", "Invalid selection")
+
+        submit_btn = tk.Button(btn_frame, text="ASSIGN", command=submit, bg=ACCENT, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        submit_btn.pack(side=tk.LEFT)
+        add_hover_effect(submit_btn, ACCENT, ACCENT, "#FFFFFF")
+
+    def _toggle_user(self, user_id, current_active):
+        result = self.api_client.admin_update_user(user_id, is_active=not current_active)
+        if result.get("ok"):
+            self._switch_page("users", self._show_users_page)
+        else:
+            messagebox.showerror("Error", result.get("error", "Failed to toggle user"))
+
+    def _delete_user(self, user_id, username):
+        if messagebox.askyesno("Confirm", f"Delete user '{username}'?"):
+            result = self.api_client.admin_delete_user(user_id)
+            if result.get("ok"):
+                self._switch_page("users", self._show_users_page)
+            else:
+                messagebox.showerror("Error", result.get("error", "Failed to delete user"))
+
+    def _delete_machine(self, machine_id, machine_name):
+        if messagebox.askyesno("Confirm", f"Delete machine '{machine_name}'?"):
+            result = self.api_client.admin_delete_machine(machine_id)
+            if result.get("ok"):
+                self._switch_page("machines", self._show_machines_page)
+            else:
+                messagebox.showerror("Error", result.get("error", "Failed to delete machine"))
+
+    def _delete_switch(self, switch_id, switch_name):
+        if messagebox.askyesno("Confirm", f"Delete switch '{switch_name}'?"):
+            result = self.api_client.admin_delete_switch(switch_id)
+            if result.get("ok"):
+                self._switch_page("switches", self._show_switches_page)
+            else:
+                messagebox.showerror("Error", result.get("error", "Failed to delete switch"))
+
+    def run(self):
+        self.root.mainloop()
+
 # ==================== MAIN ====================
 if __name__ == "__main__":
     # Check if API URL is configured
@@ -1772,7 +2518,8 @@ if __name__ == "__main__":
         elif role == "annoteur":
             print(f"Annoteur UI not yet implemented. Logged in as {username}")
         elif role == "admin":
-            print(f"Admin UI not yet implemented. Logged in as {username}")
+            app = AdminApp(username, user_id, api_client)
+            app.run()
         else:
             print(f"Unknown role: {role}")
     else:
