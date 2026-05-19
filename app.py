@@ -129,33 +129,33 @@ class ErrorDialog:
 
     def _on_retry(self):
         self.result = "retry"
-        try:
-            if self.window.winfo_exists():
-                self.window.destroy()
-        except:
-            pass
         if self.on_retry:
             self.on_retry()
+        try:
+            if self.window.winfo_exists():
+                self.window.quit()
+        except:
+            pass
 
     def _on_change_url(self):
         self.result = "change_url"
-        try:
-            if self.window.winfo_exists():
-                self.window.destroy()
-        except:
-            pass
         if self.on_change_url:
             self.on_change_url()
+        try:
+            if self.window.winfo_exists():
+                self.window.quit()
+        except:
+            pass
 
     def _on_exit(self):
         self.result = "exit"
-        try:
-            if self.window.winfo_exists():
-                self.window.destroy()
-        except:
-            pass
         if self.on_exit:
             self.on_exit()
+        try:
+            if self.window.winfo_exists():
+                self.window.quit()
+        except:
+            pass
 
     def show(self):
         self.window.transient()
