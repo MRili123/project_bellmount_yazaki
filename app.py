@@ -1643,12 +1643,67 @@ class MainApp:
     def run(self):
         self.root.mainloop()
 
+# ==================== ADMIN CACHE ====================
+class AdminCache:
+    CACHE_FILE = Path(__file__).parent / "admin_cache.json"
+    KEYS = ["users", "machines", "switches", "captures"]
+
+    def __init__(self):
+        self._cache = self._load()
+
+    def _load(self):
+        """Load cache from disk, return empty structure if missing."""
+        if self.CACHE_FILE.exists():
+            try:
+                return json.loads(self.CACHE_FILE.read_text())
+            except:
+                pass
+        return {k: {"data": [], "updated_at": None} for k in self.KEYS}
+
+    def _save(self):
+        """Persist cache to disk."""
+        try:
+            self.CACHE_FILE.write_text(json.dumps(self._cache, indent=2, default=str))
+        except:
+            pass
+
+    def get(self, key) -> list:
+        """Return cached data for key (may be empty list if not yet fetched)."""
+        return self._cache.get(key, {}).get("data", [])
+
+    def has_data(self, key) -> bool:
+        """True if cache has at least one item for this key."""
+        return len(self.get(key)) > 0
+
+    def update(self, key, server_data: list):
+        """
+        Merge server_data into local cache:
+        - Items in server but not local → add
+        - Items in local but not server → remove (deleted on server)
+        - Items in both → update local with server version
+        Returns the merged list.
+        """
+        server_by_id = {item["id"]: item for item in server_data}
+        merged = list(server_by_id.values())
+        self._cache[key] = {
+            "data": merged,
+            "updated_at": datetime.now().isoformat()
+        }
+        self._save()
+        return merged
+
+    def invalidate(self, key):
+        """Clear cache for a key (force fresh fetch next time)."""
+        self._cache[key] = {"data": [], "updated_at": None}
+        self._save()
+
 # ==================== ADMIN APP ====================
 class AdminApp:
     def __init__(self, username: str, user_id: str, api_client: APIClient):
         self.username = username
         self.user_id = user_id
         self.api_client = api_client
+        self.cache = AdminCache()
 
         self.root = tk.Tk()
         self.root.title("Bellmounth Admin Panel")
@@ -1753,33 +1808,27 @@ class AdminApp:
         frame = tk.Frame(self.content_container, bg=BG)
         frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
-        # Title
         tk.Label(frame, text="USER MANAGEMENT", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
 
-        # Fetch users
-        result = self.api_client.admin_get_users()
-        if result.get("ok"):
-            users = result.get("data", [])
-        else:
-            tk.Label(frame, text=f"✕ {result.get('error', 'Failed to load users')}", bg=BG, fg=RED, font=("Arial", 11)).pack(pady=20)
-            return
-
-        # Toolbar
         toolbar = tk.Frame(frame, bg=BG)
         toolbar.pack(fill=tk.X, pady=(0, 20))
 
-        # Add button
         add_btn = tk.Button(toolbar, text="+ ADD USER", command=self._add_user_dialog,
                           bg=ACCENT, fg="#FFFFFF", font=("Arial", 11, "bold"),
                           relief=tk.FLAT, bd=0, padx=20, pady=8)
         add_btn.pack(side=tk.RIGHT)
         add_hover_effect(add_btn, ACCENT, ACCENT, "#FFFFFF")
 
-        # Table
+        cached = self.cache.get("users")
+        self._build_users_table(frame, cached)
+
+        self._sync_users(frame, cached)
+
+    def _build_users_table(self, frame, users):
         table_frame = tk.Frame(frame, bg=BORDER, relief=tk.SUNKEN, bd=1)
         table_frame.pack(fill=tk.BOTH, expand=True)
+        table_frame._is_table = True
 
-        # Header
         header = tk.Frame(table_frame, bg=PANEL)
         header.pack(fill=tk.X)
 
@@ -1789,7 +1838,6 @@ class AdminApp:
 
         tk.Frame(table_frame, bg=BORDER, height=1).pack(fill=tk.X)
 
-        # Rows
         canvas = tk.Canvas(table_frame, bg=BG, highlightthickness=0, height=400)
         scrollbar = tk.Scrollbar(table_frame, orient=tk.VERTICAL, command=canvas.yview)
         scrollable_frame = tk.Frame(canvas, bg=BG)
@@ -1818,7 +1866,6 @@ class AdminApp:
             created_str = user.get("created_at", "")[:10] if user.get("created_at") else ""
             tk.Label(row, text=created_str, bg=row_bg, fg=TEXT2, font=("Arial", 10), width=18, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
 
-            # Action buttons
             action_frame = tk.Frame(row, bg=row_bg)
             action_frame.pack(side=tk.RIGHT, padx=10, pady=8)
 
@@ -1838,18 +1885,24 @@ class AdminApp:
         canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
 
+    def _sync_users(self, frame, cached):
+        def do_sync():
+            result = self.api_client.admin_get_users()
+            if result.get("ok"):
+                server_data = result.get("data", [])
+                merged = self.cache.update("users", server_data)
+                if merged != cached:
+                    for w in frame.winfo_children():
+                        if getattr(w, '_is_table', False):
+                            w.destroy()
+                    self._build_users_table(frame, merged)
+        self.root.after(0, do_sync)
+
     def _show_machines_page(self):
         frame = tk.Frame(self.content_container, bg=BG)
         frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
         tk.Label(frame, text="MACHINE MANAGEMENT", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
-
-        result = self.api_client.admin_get_machines()
-        if result.get("ok"):
-            machines = result.get("data", [])
-        else:
-            tk.Label(frame, text=f"✕ {result.get('error', 'Failed to load machines')}", bg=BG, fg=RED, font=("Arial", 11)).pack(pady=20)
-            return
 
         toolbar = tk.Frame(frame, bg=BG)
         toolbar.pack(fill=tk.X, pady=(0, 20))
@@ -1860,8 +1913,15 @@ class AdminApp:
         add_btn.pack(side=tk.RIGHT)
         add_hover_effect(add_btn, ACCENT, ACCENT, "#FFFFFF")
 
+        cached = self.cache.get("machines")
+        self._build_machines_table(frame, cached)
+
+        self._sync_machines(frame, cached)
+
+    def _build_machines_table(self, frame, machines):
         table_frame = tk.Frame(frame, bg=BORDER, relief=tk.SUNKEN, bd=1)
         table_frame.pack(fill=tk.BOTH, expand=True)
+        table_frame._is_table = True
 
         header = tk.Frame(table_frame, bg=PANEL)
         header.pack(fill=tk.X)
@@ -1912,18 +1972,24 @@ class AdminApp:
         canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
 
+    def _sync_machines(self, frame, cached):
+        def do_sync():
+            result = self.api_client.admin_get_machines()
+            if result.get("ok"):
+                server_data = result.get("data", [])
+                merged = self.cache.update("machines", server_data)
+                if merged != cached:
+                    for w in frame.winfo_children():
+                        if getattr(w, '_is_table', False):
+                            w.destroy()
+                    self._build_machines_table(frame, merged)
+        self.root.after(0, do_sync)
+
     def _show_switches_page(self):
         frame = tk.Frame(self.content_container, bg=BG)
         frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
         tk.Label(frame, text="SWITCH MANAGEMENT", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
-
-        result = self.api_client.get_switches()
-        if result.get("ok"):
-            switches = result.get("data", [])
-        else:
-            tk.Label(frame, text=f"✕ {result.get('error', 'Failed to load switches')}", bg=BG, fg=RED, font=("Arial", 11)).pack(pady=20)
-            return
 
         toolbar = tk.Frame(frame, bg=BG)
         toolbar.pack(fill=tk.X, pady=(0, 20))
@@ -1934,8 +2000,15 @@ class AdminApp:
         add_btn.pack(side=tk.RIGHT)
         add_hover_effect(add_btn, ACCENT, ACCENT, "#FFFFFF")
 
+        cached = self.cache.get("switches")
+        self._build_switches_table(frame, cached)
+
+        self._sync_switches(frame, cached)
+
+    def _build_switches_table(self, frame, switches):
         table_frame = tk.Frame(frame, bg=BORDER, relief=tk.SUNKEN, bd=1)
         table_frame.pack(fill=tk.BOTH, expand=True)
+        table_frame._is_table = True
 
         header = tk.Frame(table_frame, bg=PANEL)
         header.pack(fill=tk.X)
@@ -1987,25 +2060,36 @@ class AdminApp:
         canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
 
+    def _sync_switches(self, frame, cached):
+        def do_sync():
+            result = self.api_client.get_switches()
+            if result.get("ok"):
+                server_data = result.get("data", [])
+                merged = self.cache.update("switches", server_data)
+                if merged != cached:
+                    for w in frame.winfo_children():
+                        if getattr(w, '_is_table', False):
+                            w.destroy()
+                    self._build_switches_table(frame, merged)
+        self.root.after(0, do_sync)
+
     def _show_captures_page(self):
         frame = tk.Frame(self.content_container, bg=BG)
         frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
         tk.Label(frame, text="CAPTURES DASHBOARD", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
 
-        result = self.api_client.admin_get_captures()
-        if result.get("ok"):
-            captures = result.get("data", [])
-        else:
-            tk.Label(frame, text=f"✕ {result.get('error', 'Failed to load captures')}", bg=BG, fg=RED, font=("Arial", 11)).pack(pady=20)
-            return
+        cached = self.cache.get("captures")
+        self._build_captures_table(frame, cached)
 
-        # Get annoteurs for assignment
-        annoteurs_result = self.api_client.admin_get_users(role="annoteur")
-        annoteurs = annoteurs_result.get("data", []) if annoteurs_result.get("ok") else []
+        self._sync_captures(frame, cached)
+
+    def _build_captures_table(self, frame, captures):
+        annoteurs = [u for u in self.cache.get("users") if u.get("role") == "annoteur"]
 
         table_frame = tk.Frame(frame, bg=BORDER, relief=tk.SUNKEN, bd=1)
         table_frame.pack(fill=tk.BOTH, expand=True)
+        table_frame._is_table = True
 
         header = tk.Frame(table_frame, bg=PANEL)
         header.pack(fill=tk.X)
@@ -2073,6 +2157,19 @@ class AdminApp:
         canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
 
+    def _sync_captures(self, frame, cached):
+        def do_sync():
+            result = self.api_client.admin_get_captures()
+            if result.get("ok"):
+                server_data = result.get("data", [])
+                merged = self.cache.update("captures", server_data)
+                if merged != cached:
+                    for w in frame.winfo_children():
+                        if getattr(w, '_is_table', False):
+                            w.destroy()
+                    self._build_captures_table(frame, merged)
+        self.root.after(0, do_sync)
+
     def _add_user_dialog(self):
         dialog = tk.Toplevel(self.root)
         dialog.title("Add User")
@@ -2118,6 +2215,7 @@ class AdminApp:
                 role_var.get()
             )
             if result.get("ok"):
+                self.cache.invalidate("users")
                 dialog.destroy()
                 self._switch_page("users", self._show_users_page)
             else:
@@ -2171,6 +2269,7 @@ class AdminApp:
                 firmware_entry.get()
             )
             if result.get("ok"):
+                self.cache.invalidate("machines")
                 dialog.destroy()
                 self._switch_page("machines", self._show_machines_page)
             else:
@@ -2230,6 +2329,7 @@ class AdminApp:
                     type_entry.get()
                 )
                 if result.get("ok"):
+                    self.cache.invalidate("switches")
                     dialog.destroy()
                     self._switch_page("switches", self._show_switches_page)
                 else:
@@ -2297,6 +2397,7 @@ class AdminApp:
                     tolerance_max=float(max_entry.get())
                 )
                 if result.get("ok"):
+                    self.cache.invalidate("switches")
                     dialog.destroy()
                     self._switch_page("switches", self._show_switches_page)
                 else:
@@ -2344,6 +2445,7 @@ class AdminApp:
                 annoteur_id = annoteur_ids[idx]
                 result = self.api_client.admin_assign_capture(capture_id, annoteur_id)
                 if result.get("ok"):
+                    self.cache.invalidate("captures")
                     dialog.destroy()
                     self._switch_page("captures", self._show_captures_page)
                 else:
@@ -2358,6 +2460,7 @@ class AdminApp:
     def _toggle_user(self, user_id, current_active):
         result = self.api_client.admin_update_user(user_id, is_active=not current_active)
         if result.get("ok"):
+            self.cache.invalidate("users")
             self._switch_page("users", self._show_users_page)
         else:
             messagebox.showerror("Error", result.get("error", "Failed to toggle user"))
@@ -2366,6 +2469,7 @@ class AdminApp:
         if messagebox.askyesno("Confirm", f"Delete user '{username}'?"):
             result = self.api_client.admin_delete_user(user_id)
             if result.get("ok"):
+                self.cache.invalidate("users")
                 self._switch_page("users", self._show_users_page)
             else:
                 messagebox.showerror("Error", result.get("error", "Failed to delete user"))
@@ -2374,6 +2478,7 @@ class AdminApp:
         if messagebox.askyesno("Confirm", f"Delete machine '{machine_name}'?"):
             result = self.api_client.admin_delete_machine(machine_id)
             if result.get("ok"):
+                self.cache.invalidate("machines")
                 self._switch_page("machines", self._show_machines_page)
             else:
                 messagebox.showerror("Error", result.get("error", "Failed to delete machine"))
@@ -2382,6 +2487,7 @@ class AdminApp:
         if messagebox.askyesno("Confirm", f"Delete switch '{switch_name}'?"):
             result = self.api_client.admin_delete_switch(switch_id)
             if result.get("ok"):
+                self.cache.invalidate("switches")
                 self._switch_page("switches", self._show_switches_page)
             else:
                 messagebox.showerror("Error", result.get("error", "Failed to delete switch"))

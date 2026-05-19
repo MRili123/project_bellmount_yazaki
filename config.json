@@ -1,4 +1,3 @@
 {
-  "machine_name": "LAB-01",
-  "password": "bellmounth"
+  "api_url": "http://localhost:8000"
 }
