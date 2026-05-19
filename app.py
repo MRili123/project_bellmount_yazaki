@@ -1600,11 +1600,9 @@ if __name__ == "__main__":
 
             def on_retry():
                 user_action[0] = "retry"
-                error_root.destroy()
 
             def on_exit():
                 user_action[0] = "exit"
-                error_root.destroy()
 
             error_dialog = ErrorDialog(
                 error_root,
@@ -1615,7 +1613,10 @@ if __name__ == "__main__":
                 on_exit=on_exit
             )
             error_dialog.show()
-            error_root.destroy()
+            try:
+                error_root.destroy()
+            except:
+                pass
 
             if user_action[0] == "exit":
                 sys.exit(0)
@@ -1642,15 +1643,12 @@ if __name__ == "__main__":
 
         def on_retry():
             user_action[0] = "retry"
-            error_root.destroy()
 
         def on_change_url():
             user_action[0] = "change_url"
-            error_root.destroy()
 
         def on_exit():
             user_action[0] = "exit"
-            error_root.destroy()
 
         error_dialog = ErrorDialog(
             error_root,
@@ -1662,7 +1660,10 @@ if __name__ == "__main__":
             on_exit=on_exit
         )
         error_dialog.show()
-        error_root.destroy()
+        try:
+            error_root.destroy()
+        except:
+            pass
 
         # Handle user's choice
         if user_action[0] == "retry":
