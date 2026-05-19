@@ -163,6 +163,10 @@ class ErrorDialog:
         self.window.transient()
         self.window.grab_set()
         self.window.mainloop()
+        try:
+            self.window.grab_release()
+        except:
+            pass
         return self.result
 
 # ==================== SETUP WINDOW (First-Time Configuration) ====================
