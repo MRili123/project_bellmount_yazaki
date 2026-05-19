@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from typing import List, Optional
@@ -12,7 +12,6 @@ from schemas import (
     CaptureAdminResponse, AssignCaptureRequest
 )
 from auth import hash_password
-from fastapi import Depends
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
