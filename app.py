@@ -71,6 +71,9 @@ class ErrorDialog:
         self.on_exit = on_exit
         self.result = None
 
+        # Handle window close button
+        self.window.protocol("WM_DELETE_WINDOW", self._on_window_close)
+
         # Color scheme based on error type - using red and white
         error_colors = {
             "no_internet": ("#AF151D", "NO INTERNET", "🌐"),
@@ -153,6 +156,14 @@ class ErrorDialog:
         self.result = "exit"
         if self.on_exit:
             self.on_exit()
+        try:
+            if self.window.winfo_exists():
+                self.window.quit()
+        except:
+            pass
+
+    def _on_window_close(self):
+        self.result = "close"
         try:
             if self.window.winfo_exists():
                 self.window.quit()
@@ -1613,7 +1624,7 @@ class MainApp:
                             message,
                             details,
                             on_retry=on_retry_check,
-                            on_exit=self._on_closing
+                            on_exit=None
                         )
                         error_dialog.show()
                         try:
