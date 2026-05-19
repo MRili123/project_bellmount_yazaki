@@ -1596,28 +1596,35 @@ class MainApp:
         current_time = time.time()
         if current_time - self.last_health_check_time >= self.health_check_interval and self.api_client:
             self.last_health_check_time = current_time
-            result = self.api_client.health_check()
-            if not result.get("ok"):
-                error_type = result.get("error_type", "unknown")
-                message = result.get("error", "Server connection lost")
-                details = result.get("details", "")
+            try:
+                result = self.api_client.health_check()
+                if not result.get("ok"):
+                    error_type = result.get("error_type", "unknown")
+                    message = result.get("error", "Server connection lost")
+                    details = result.get("details", "")
 
-                def on_retry_check():
-                    self.last_health_check_time = 0  # Reset to check immediately
+                    def on_retry_check():
+                        self.last_health_check_time = 0  # Reset to check immediately
 
-                error_dialog = ErrorDialog(
-                    self.root,
-                    error_type,
-                    message,
-                    details,
-                    on_retry=on_retry_check,
-                    on_exit=self._on_closing
-                )
-                error_dialog.show()
-                try:
-                    error_dialog.window.destroy()
-                except:
-                    pass
+                    try:
+                        error_dialog = ErrorDialog(
+                            self.root,
+                            error_type,
+                            message,
+                            details,
+                            on_retry=on_retry_check,
+                            on_exit=self._on_closing
+                        )
+                        error_dialog.show()
+                        try:
+                            if error_dialog.window.winfo_exists():
+                                error_dialog.window.destroy()
+                        except:
+                            pass
+                    except Exception as e:
+                        print(f"Error showing dialog: {e}")
+            except Exception as e:
+                print(f"Health check error: {e}")
 
         if self._loop_running:
             self.root.after(50, self._start_loop)
