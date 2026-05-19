@@ -898,6 +898,10 @@ class MainApp:
                     on_exit=None
                 )
                 error_dialog.show()
+                try:
+                    error_dialog.window.destroy()
+                except:
+                    pass
                 return
 
             # Verify API is available
@@ -916,6 +920,10 @@ class MainApp:
                     on_exit=None
                 )
                 error_dialog.show()
+                try:
+                    error_dialog.window.destroy()
+                except:
+                    pass
                 return
 
             # Both connection and API are OK - proceed with upload
@@ -940,6 +948,10 @@ class MainApp:
                         on_exit=None
                     )
                     error_dialog.show()
+                    try:
+                        error_dialog.window.destroy()
+                    except:
+                        pass
             else:
                 messagebox.showinfo("Success", f"✓ Image saved locally ({mode_text})")
 
