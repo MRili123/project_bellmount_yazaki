@@ -886,6 +886,39 @@ class MainApp:
 
         def _upload_with_mode():
             mode_text = "AUTO mode" if self.mode == "AUTO" else "MANUAL mode"
+
+            # Verify connection before upload
+            if not check_internet_connection():
+                error_dialog = ErrorDialog(
+                    self.root,
+                    "no_internet",
+                    "No Internet Connection",
+                    "Cannot upload: Your machine is not connected to the internet",
+                    on_retry=_upload_with_mode,
+                    on_exit=None
+                )
+                error_dialog.show()
+                return
+
+            # Verify API is available
+            health_result = self.api_client.health_check()
+            if not health_result.get("ok"):
+                error_type = health_result.get("error_type", "server_down")
+                error_msg = health_result.get("error", "API server is not responding")
+                details = health_result.get("details", "")
+
+                error_dialog = ErrorDialog(
+                    self.root,
+                    error_type,
+                    error_msg,
+                    details,
+                    on_retry=_upload_with_mode,
+                    on_exit=None
+                )
+                error_dialog.show()
+                return
+
+            # Both connection and API are OK - proceed with upload
             self._save_annotation()
 
             # Check upload result
