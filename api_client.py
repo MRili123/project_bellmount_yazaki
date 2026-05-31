@@ -127,7 +127,7 @@ class APIClient:
     def get_switches(self, machine_id: str = None) -> Dict[str, Any]:
         """Get list of switches. Optionally filter by machine_id. Returns {"ok": bool, "data": list} or error dict."""
         try:
-            url = f"{self.api_url}/admin/switches"
+            url = f"{self.api_url}/switches/"
             params = {}
             if machine_id:
                 params["machine_id"] = machine_id

@@ -170,15 +170,21 @@ ALTER TABLE switches DROP COLUMN assigned_machines;
 
 ---
 
-## Next Steps
+## Implementation Status
 
-1. ✅ Update models.py
-2. ✅ Update schemas.py  
-3. ✅ Update admin router
-4. 📋 Update machine user app (app.py) to fetch switches by machine_id
-5. 📋 Update admin UI (SWITCHES page) to show machine → switches hierarchy
-6. 📋 Update Admin cache to handle machine-scoped switches
-7. 📋 Database migration (if production database exists)
+### ✅ Completed
+1. ✅ Updated models.py — Switch.machine_id foreign key
+2. ✅ Updated schemas.py — Added machine_id to SwitchCreate/SwitchResponse
+3. ✅ Updated admin router — GET /admin/switches?machine_id filter
+4. ✅ Updated auth endpoints — LoginResponse includes machine_id
+5. ✅ Updated APIClient — get_switches(machine_id) parameter + admin_get_switches()
+6. ✅ Updated app.py (MainApp) — Fetches only its machine's switches
+7. ✅ Git commits (2): Schema fix + machine-scoped filtering
+
+### 📋 Remaining (Optional)
+1. Update admin UI (SWITCHES page) to show machine → switches hierarchy
+2. Update Admin cache to handle machine-scoped switches
+3. Database migration (if production database exists)
 
 ---
 
