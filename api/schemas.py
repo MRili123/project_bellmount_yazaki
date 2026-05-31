@@ -17,6 +17,7 @@ class LoginResponse(BaseModel):
 class SwitchResponse(BaseModel):
     id: str
     machine_id: str
+    machine_name: str
     switch_name: str
     expected_diameter_mm: float
     tolerance_min: float

@@ -137,10 +137,37 @@ def delete_machine(machine_id: str, db: Session = Depends(get_db)):
 @router.get("/switches", response_model=List[SwitchResponse])
 def get_switches(machine_id: Optional[str] = Query(None), db: Session = Depends(get_db)):
     """Get all switches, optionally filtered by machine_id"""
-    query = db.query(Switch)
+    query = db.query(
+        Switch.id,
+        Switch.machine_id,
+        Machine.machine_name,
+        Switch.switch_name,
+        Switch.expected_diameter_mm,
+        Switch.tolerance_min,
+        Switch.tolerance_max,
+        Switch.cable_type,
+        Switch.created_at,
+        Switch.updated_at
+    ).join(Machine, Switch.machine_id == Machine.id)
+
     if machine_id:
         query = query.filter(Switch.machine_id == machine_id)
-    return query.all()
+
+    results = query.all()
+    return [
+        SwitchResponse(
+            id=r[0],
+            machine_id=r[1],
+            machine_name=r[2],
+            switch_name=r[3],
+            expected_diameter_mm=r[4],
+            tolerance_min=r[5],
+            tolerance_max=r[6],
+            cable_type=r[7],
+            created_at=r[8]
+        )
+        for r in results
+    ]
 
 @router.post("/switches", response_model=SwitchResponse)
 def create_switch(body: SwitchCreate, db: Session = Depends(get_db)):
