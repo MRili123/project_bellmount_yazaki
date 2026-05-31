@@ -1,0 +1,264 @@
+{
+  "users": {
+    "data": [
+      {
+        "id": "da2d73fe-2ee1-4686-bd41-7f24f475ba75",
+        "username": "annoteur_01",
+        "role": "annoteur",
+        "email": "annoteur1@bellmounth.local",
+        "is_active": true,
+        "created_at": "2026-05-22T09:16:31.092273"
+      },
+      {
+        "id": "0e2ff033-d436-49ad-b961-0974f244e404",
+        "username": "annoteur_02",
+        "role": "annoteur",
+        "email": "annoteur2@bellmounth.local",
+        "is_active": true,
+        "created_at": "2026-05-22T09:16:31.092279"
+      },
+      {
+        "id": "3cd16bff-cd39-4cb7-9299-1e19635667c4",
+        "username": "admin",
+        "role": "admin",
+        "email": "admin@bellmounth.local",
+        "is_active": true,
+        "created_at": "2026-05-22T09:16:31.307570"
+      }
+    ],
+    "updated_at": "2026-05-31T19:03:35.466532"
+  },
+  "machines": {
+    "data": [
+      {
+        "id": "58d62ea2-4855-459e-a90c-acabb189f3d8",
+        "machine_name": "LAB-01",
+        "location": "Factory 1",
+        "firmware_version": "1.0.0",
+        "is_connected": false,
+        "is_active": true,
+        "created_at": "2026-05-22T09:16:30.668500"
+      },
+      {
+        "id": "8894c748-add5-4f97-b0b5-ba2ebf984f93",
+        "machine_name": "LAB-02",
+        "location": "Factory 2",
+        "firmware_version": "1.0.0",
+        "is_connected": false,
+        "is_active": true,
+        "created_at": "2026-05-22T09:16:30.668511"
+      }
+    ],
+    "updated_at": "2026-05-31T19:54:15.635139"
+  },
+  "switches": {
+    "data": [
+      {
+        "id": "9b476707-342e-44cf-8b16-8fe1862e4fe9",
+        "switch_name": "Standard Cable",
+        "expected_diameter_mm": 10.5,
+        "tolerance_min": 10.0,
+        "tolerance_max": 11.0,
+        "cable_type": "Standard",
+        "created_at": "2026-05-22T09:16:31.317321"
+      },
+      {
+        "id": "e19fbbd5-def3-42ed-a9d9-5d4a4394bef8",
+        "switch_name": "Reinforced Cable",
+        "expected_diameter_mm": 12.0,
+        "tolerance_min": 11.5,
+        "tolerance_max": 12.5,
+        "cable_type": "Reinforced",
+        "created_at": "2026-05-22T09:16:31.317332"
+      }
+    ],
+    "updated_at": "2026-05-31T19:54:36.822450"
+  },
+  "captures": {
+    "data": [
+      {
+        "id": "0d2dc060-a6f8-4f13-8738-8a762b12f924",
+        "machine_id": "58d62ea2-4855-459e-a90c-acabb189f3d8",
+        "switch_id": "9b476707-342e-44cf-8b16-8fe1862e4fe9",
+        "annoteur_id": "da2d73fe-2ee1-4686-bd41-7f24f475ba75",
+        "image_original_path": "C:\\Users\\ilias\\OneDrive\\Desktop\\bellmounth project\\model_bellmounth_mesure\\dataset\\original\\capture_20260427_150251_452.png",
+        "image_thresholded_path": "C:\\Users\\ilias\\OneDrive\\Desktop\\bellmounth project\\model_bellmounth_mesure\\dataset\\thresholded\\capture_20260427_150251_452.png",
+        "p1_x": 526,
+        "p1_y": 198,
+        "p2_x": 463,
+        "p2_y": 198,
+        "measured_distance_mm": 1.04,
+        "expected_diameter_mm": 10.5,
+        "zoom_level": 2.0,
+        "capture_method": "manual",
+        "measurement_status": "okay",
+        "delta_mm": 0.1,
+        "annoteur_approved": true,
+        "quality_score": 0.95,
+        "created_at": "2026-05-22T04:36:16.645780"
+      },
+      {
+        "id": "c1a6dd9e-bc06-4538-8263-3b5aa7458e3e",
+        "machine_id": "58d62ea2-4855-459e-a90c-acabb189f3d8",
+        "switch_id": "9b476707-342e-44cf-8b16-8fe1862e4fe9",
+        "annoteur_id": "da2d73fe-2ee1-4686-bd41-7f24f475ba75",
+        "image_original_path": "C:\\Users\\ilias\\OneDrive\\Desktop\\bellmounth project\\model_bellmounth_mesure\\dataset\\original\\capture_20260427_150248_445.png",
+        "image_thresholded_path": "C:\\Users\\ilias\\OneDrive\\Desktop\\bellmounth project\\model_bellmounth_mesure\\dataset\\thresholded\\capture_20260427_150248_445.png",
+        "p1_x": 526,
+        "p1_y": 190,
+        "p2_x": 465,
+        "p2_y": 190,
+        "measured_distance_mm": 1.01,
+        "expected_diameter_mm": 10.5,
+        "zoom_level": 3.0,
+        "capture_method": "manual",
+        "measurement_status": "okay",
+        "delta_mm": 0.1,
+        "annoteur_approved": false,
+        "quality_score": 0.95,
+        "created_at": "2026-05-22T05:36:16.646549"
+      },
+      {
+        "id": "bf838bf5-1e02-4424-8455-c7f4641e2787",
+        "machine_id": "58d62ea2-4855-459e-a90c-acabb189f3d8",
+        "switch_id": "9b476707-342e-44cf-8b16-8fe1862e4fe9",
+        "annoteur_id": "da2d73fe-2ee1-4686-bd41-7f24f475ba75",
+        "image_original_path": "C:\\Users\\ilias\\OneDrive\\Desktop\\bellmounth project\\model_bellmounth_mesure\\dataset\\original\\capture_20260427_141157_696.png",
+        "image_thresholded_path": "C:\\Users\\ilias\\OneDrive\\Desktop\\bellmounth project\\model_bellmounth_mesure\\dataset\\thresholded\\capture_20260427_141157_696.png",
+        "p1_x": 460,
+        "p1_y": 190,
+        "p2_x": 520,
+        "p2_y": 190,
+        "measured_distance_mm": 0.99,
+        "expected_diameter_mm": 10.5,
+        "zoom_level": 4.0,
+        "capture_method": "manual",
+        "measurement_status": "okay",
+        "delta_mm": 0.1,
+        "annoteur_approved": false,
+        "quality_score": 0.95,
+        "created_at": "2026-05-22T06:36:16.646582"
+      },
+      {
+        "id": "5cd9515c-0b19-4201-8aa9-575908761444",
+        "machine_id": "58d62ea2-4855-459e-a90c-acabb189f3d8",
+        "switch_id": "9b476707-342e-44cf-8b16-8fe1862e4fe9",
+        "annoteur_id": "da2d73fe-2ee1-4686-bd41-7f24f475ba75",
+        "image_original_path": "C:\\Users\\ilias\\OneDrive\\Desktop\\bellmounth project\\model_bellmounth_mesure\\dataset\\original\\capture_20260427_141154_730.png",
+        "image_thresholded_path": "C:\\Users\\ilias\\OneDrive\\Desktop\\bellmounth project\\model_bellmounth_mesure\\dataset\\thresholded\\capture_20260427_141154_730.png",
+        "p1_x": 520,
+        "p1_y": 191,
+        "p2_x": 460,
+        "p2_y": 191,
+        "measured_distance_mm": 0.99,
+        "expected_diameter_mm": 10.5,
+        "zoom_level": 5.0,
+        "capture_method": "manual",
+        "measurement_status": "okay",
+        "delta_mm": 0.1,
+        "annoteur_approved": false,
+        "quality_score": 0.95,
+        "created_at": "2026-05-22T07:36:16.646600"
+      },
+      {
+        "id": "7565d59d-ac13-44a7-8f16-a1a16b8d0ab7",
+        "machine_id": "58d62ea2-4855-459e-a90c-acabb189f3d8",
+        "switch_id": "9b476707-342e-44cf-8b16-8fe1862e4fe9",
+        "annoteur_id": "da2d73fe-2ee1-4686-bd41-7f24f475ba75",
+        "image_original_path": "C:\\Users\\ilias\\OneDrive\\Desktop\\bellmounth project\\model_bellmounth_mesure\\dataset\\original\\capture_20260427_141151_713.png",
+        "image_thresholded_path": "C:\\Users\\ilias\\OneDrive\\Desktop\\bellmounth project\\model_bellmounth_mesure\\dataset\\thresholded\\capture_20260427_141151_713.png",
+        "p1_x": 586,
+        "p1_y": 189,
+        "p2_x": 523,
+        "p2_y": 189,
+        "measured_distance_mm": 1.04,
+        "expected_diameter_mm": 10.5,
+        "zoom_level": 6.0,
+        "capture_method": "manual",
+        "measurement_status": "okay",
+        "delta_mm": 0.1,
+        "annoteur_approved": false,
+        "quality_score": 0.95,
+        "created_at": "2026-05-22T08:36:16.646617"
+      }
+    ],
+    "updated_at": "2026-05-31T19:53:26.745171"
+  },
+  "notifications": {
+    "data": [
+      {
+        "id": "4adcdd45-ba10-4cc1-b883-4afe18592bb8",
+        "notification_type": "info",
+        "title": "System Maintenance Scheduled",
+        "body": "Database maintenance scheduled for tomorrow at 2:00 AM. Expected downtime: 30 minutes.",
+        "read": false,
+        "username": "admin",
+        "created_at": "2026-05-22T08:59:42.535789"
+      },
+      {
+        "id": "d53698b7-d00c-4524-b9cb-cfdddae54302",
+        "notification_type": "success",
+        "title": "Model Training Complete",
+        "body": "CNN model training finished successfully. Accuracy: 96.2%. Ready for deployment.",
+        "read": true,
+        "username": "admin",
+        "created_at": "2026-05-22T07:59:42.535774"
+      },
+      {
+        "id": "edf4df03-6e1b-47c8-8d33-b9949099af4b",
+        "notification_type": "warning",
+        "title": "Switch Configuration Change",
+        "body": "Switch 'Standard Cable' tolerance limits were updated. Affects 23 pending captures.",
+        "read": false,
+        "username": "admin",
+        "created_at": "2026-05-22T06:59:42.535766"
+      },
+      {
+        "id": "67385176-a287-4787-a30d-1bb829c58085",
+        "notification_type": "info",
+        "title": "Annoteur Performance Report",
+        "body": "Weekly performance report is ready. annoteur_01 has reviewed 42 captures with 98% accuracy.",
+        "read": true,
+        "username": "admin",
+        "created_at": "2026-05-22T05:59:42.535758"
+      },
+      {
+        "id": "0e1b0a05-18c6-4993-9860-8f8d87d79815",
+        "notification_type": "alert",
+        "title": "Machine Connection Lost",
+        "body": "Machine LAB-02 has disconnected. Last seen 2 hours ago. Please check the connection.",
+        "read": false,
+        "username": "admin",
+        "created_at": "2026-05-22T04:59:42.535750"
+      },
+      {
+        "id": "47e9416e-8c08-4ae1-adf9-df628aa4a276",
+        "notification_type": "success",
+        "title": "Dataset Updated",
+        "body": "15 new approved captures added to the training dataset. Ready for model training.",
+        "read": true,
+        "username": "admin",
+        "created_at": "2026-05-22T03:59:42.535740"
+      },
+      {
+        "id": "e5bd9931-1428-43e7-af98-d4cec443d375",
+        "notification_type": "warning",
+        "title": "Low Quality Captures",
+        "body": "Machine LAB-01 has produced 3 low-quality captures. Quality score below 0.7. Review recommended.",
+        "read": false,
+        "username": "admin",
+        "created_at": "2026-05-22T02:59:42.535715"
+      },
+      {
+        "id": "474ecd35-0198-4f78-8d05-183c2752214d",
+        "notification_type": "info",
+        "title": "New Capture Request",
+        "body": "5 new captures are waiting for annotation review. Please check the REQUESTS section.",
+        "read": false,
+        "username": "admin",
+        "created_at": "2026-05-22T01:59:42.533751"
+      }
+    ],
+    "updated_at": "2026-05-22T14:47:48.643507"
+  }
+}

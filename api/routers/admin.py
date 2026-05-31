@@ -4,10 +4,10 @@ from sqlalchemy import select
 from typing import List, Optional
 import uuid
 from database import get_db
-from models import User, Machine, Switch, Capture, UserRole
+from models import User, Machine, Switch, Capture, Notification, UserRole
 from schemas import (
     UserCreate, UserUpdate, UserResponse,
-    MachineCreate, MachineFullResponse,
+    MachineCreate, MachineFullResponse, MachineUpdate,
     SwitchCreate, SwitchUpdate, SwitchResponse,
     CaptureAdminResponse, AssignCaptureRequest
 )
@@ -103,6 +103,24 @@ def create_machine(body: MachineCreate, db: Session = Depends(get_db)):
     db.refresh(machine)
     return machine
 
+@router.put("/machines/{machine_id}", response_model=MachineFullResponse)
+def update_machine(machine_id: str, body: MachineUpdate, db: Session = Depends(get_db)):
+    """Update a machine (partial update - only non-None fields)"""
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(404, "Machine not found")
+
+    if body.location is not None:
+        machine.location = body.location
+    if body.firmware_version is not None:
+        machine.firmware_version = body.firmware_version
+    if body.is_active is not None:
+        machine.is_active = body.is_active
+
+    db.commit()
+    db.refresh(machine)
+    return machine
+
 @router.delete("/machines/{machine_id}")
 def delete_machine(machine_id: str, db: Session = Depends(get_db)):
     """Delete a machine"""
@@ -116,17 +134,30 @@ def delete_machine(machine_id: str, db: Session = Depends(get_db)):
 
 # ==================== SWITCHES ====================
 
+@router.get("/switches", response_model=List[SwitchResponse])
+def get_switches(machine_id: Optional[str] = Query(None), db: Session = Depends(get_db)):
+    """Get all switches, optionally filtered by machine_id"""
+    query = db.query(Switch)
+    if machine_id:
+        query = query.filter(Switch.machine_id == machine_id)
+    return query.all()
+
 @router.post("/switches", response_model=SwitchResponse)
 def create_switch(body: SwitchCreate, db: Session = Depends(get_db)):
-    """Create a new switch"""
+    """Create a new switch for a specific machine"""
+    # Verify machine exists
+    machine = db.query(Machine).filter(Machine.id == body.machine_id).first()
+    if not machine:
+        raise HTTPException(400, "Machine not found")
+
     switch = Switch(
         id=str(uuid.uuid4()),
+        machine_id=body.machine_id,
         switch_name=body.switch_name,
         expected_diameter_mm=body.expected_diameter_mm,
         tolerance_min=body.tolerance_min,
         tolerance_max=body.tolerance_max,
-        cable_type=body.cable_type,
-        assigned_machines=[]
+        cable_type=body.cable_type
     )
     db.add(switch)
     db.commit()
@@ -171,7 +202,10 @@ def delete_switch(switch_id: str, db: Session = Depends(get_db)):
 @router.get("/captures", response_model=List[CaptureAdminResponse])
 def get_captures(status: Optional[str] = Query(None), db: Session = Depends(get_db)):
     """Get all captures, optionally filtered by status (pending|assigned|approved)"""
-    query = db.query(Capture)
+    from models import Switch
+    query = db.query(Capture, Switch.expected_diameter_mm).join(
+        Switch, Capture.switch_id == Switch.id, isouter=True
+    )
 
     if status == "pending":
         query = query.filter(Capture.annoteur_id == None)
@@ -182,7 +216,12 @@ def get_captures(status: Optional[str] = Query(None), db: Session = Depends(get_
     elif status == "approved":
         query = query.filter(Capture.annoteur_approved == True)
 
-    return query.all()
+    results = []
+    for capture, expected_mm in query.all():
+        capture_dict = capture.__dict__.copy()
+        capture_dict['expected_diameter_mm'] = expected_mm
+        results.append(CaptureAdminResponse(**capture_dict))
+    return results
 
 @router.put("/captures/{capture_id}/assign", response_model=CaptureAdminResponse)
 def assign_capture(capture_id: str, body: AssignCaptureRequest, db: Session = Depends(get_db)):
@@ -196,6 +235,18 @@ def assign_capture(capture_id: str, body: AssignCaptureRequest, db: Session = De
         raise HTTPException(400, "Invalid annoteur_id - user must have annoteur role")
 
     capture.annoteur_id = body.annoteur_id
+    db.commit()
+    db.refresh(capture)
+    return capture
+
+@router.put("/captures/{capture_id}/approve", response_model=CaptureAdminResponse)
+def approve_capture(capture_id: str, db: Session = Depends(get_db)):
+    """Approve a capture"""
+    capture = db.query(Capture).filter(Capture.id == capture_id).first()
+    if not capture:
+        raise HTTPException(404, "Capture not found")
+
+    capture.annoteur_approved = True
     db.commit()
     db.refresh(capture)
     return capture

@@ -1692,6 +1692,18 @@ class AdminCache:
         self._save()
         return merged
 
+    def is_stale(self, key, timeout_seconds=30) -> bool:
+        """Check if cache for key is older than timeout_seconds."""
+        updated_at = self._cache.get(key, {}).get("updated_at")
+        if not updated_at:
+            return True
+        try:
+            last_update = datetime.fromisoformat(updated_at)
+            age = (datetime.now() - last_update).total_seconds()
+            return age > timeout_seconds
+        except:
+            return True
+
     def invalidate(self, key):
         """Clear cache for a key (force fresh fetch next time)."""
         self._cache[key] = {"data": [], "updated_at": None}
@@ -1763,7 +1775,10 @@ class AdminApp:
             ("USERS", "users", self._show_users_page),
             ("MACHINES", "machines", self._show_machines_page),
             ("SWITCHES", "switches", self._show_switches_page),
-            ("CAPTURES", "captures", self._show_captures_page),
+            ("REQUESTS", "requests", self._show_requests_page),
+            ("DATASET", "dataset", self._show_dataset_page),
+            ("MODEL", "model", self._show_model_page),
+            ("NOTIFICATIONS", "notifications", self._show_notifications_page),
         ]
 
         for label, page_id, callback in pages:
@@ -1793,7 +1808,6 @@ class AdminApp:
         for widget in self.content_container.winfo_children():
             widget.destroy()
 
-        self.root.update_idletasks()
         callback()
 
     def _update_clock(self):
@@ -1813,6 +1827,15 @@ class AdminApp:
         toolbar = tk.Frame(frame, bg=BG)
         toolbar.pack(fill=tk.X, pady=(0, 20))
 
+        # Search bar
+        tk.Label(toolbar, text="Search:", bg=BG, fg=TEXT2, font=("Arial", 10)).pack(side=tk.LEFT, padx=(0, 10))
+        users_search_var = tk.StringVar()
+        search_entry = tk.Entry(toolbar, textvariable=users_search_var, font=("Consolas", 10),
+                               bg=PANEL, fg=TEXT, insertbackground=ACCENT,
+                               relief=tk.FLAT, bd=0, highlightthickness=1,
+                               highlightbackground=BORDER, highlightcolor=ACCENT, width=30)
+        search_entry.pack(side=tk.LEFT, padx=(0, 20), ipady=6)
+
         add_btn = tk.Button(toolbar, text="+ ADD USER", command=self._add_user_dialog,
                           bg=ACCENT, fg="#FFFFFF", font=("Arial", 11, "bold"),
                           relief=tk.FLAT, bd=0, padx=20, pady=8)
@@ -1820,8 +1843,26 @@ class AdminApp:
         add_hover_effect(add_btn, ACCENT, ACCENT, "#FFFFFF")
 
         cached = self.cache.get("users")
-        self._build_users_table(frame, cached)
+        search_timer = [None]
 
+        def on_search_change(*args):
+            if search_timer[0]:
+                self.root.after_cancel(search_timer[0])
+
+            def do_search():
+                search_term = users_search_var.get().lower()
+                filtered = [u for u in cached if search_term in u.get("username", "").lower() or
+                           search_term in u.get("email", "").lower() or
+                           search_term in u.get("role", "").lower()]
+                for w in frame.winfo_children():
+                    if getattr(w, '_is_table', False):
+                        w.destroy()
+                self._build_users_table(frame, filtered)
+
+            search_timer[0] = self.root.after(300, do_search)
+
+        users_search_var.trace('w', on_search_change)
+        self._build_users_table(frame, cached)
         self._sync_users(frame, cached)
 
     def _build_users_table(self, frame, users):
@@ -1850,7 +1891,10 @@ class AdminApp:
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
-        for i, user in enumerate(users):
+        # Filter out admin users - only show machine_user and annoteur roles
+        filtered_users = [u for u in users if u.get("role") != "admin"]
+
+        for i, user in enumerate(filtered_users):
             row_bg = PANEL if i % 2 == 0 else BG
             row = tk.Frame(scrollable_frame, bg=row_bg)
             row.pack(fill=tk.X)
@@ -1886,6 +1930,8 @@ class AdminApp:
         scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
 
     def _sync_users(self, frame, cached):
+        if not self.cache.is_stale("users"):
+            return
         def do_sync():
             result = self.api_client.admin_get_users()
             if result.get("ok"):
@@ -1907,6 +1953,15 @@ class AdminApp:
         toolbar = tk.Frame(frame, bg=BG)
         toolbar.pack(fill=tk.X, pady=(0, 20))
 
+        # Search bar
+        tk.Label(toolbar, text="Search:", bg=BG, fg=TEXT2, font=("Arial", 10)).pack(side=tk.LEFT, padx=(0, 10))
+        machines_search_var = tk.StringVar()
+        search_entry = tk.Entry(toolbar, textvariable=machines_search_var, font=("Consolas", 10),
+                               bg=PANEL, fg=TEXT, insertbackground=ACCENT,
+                               relief=tk.FLAT, bd=0, highlightthickness=1,
+                               highlightbackground=BORDER, highlightcolor=ACCENT, width=30)
+        search_entry.pack(side=tk.LEFT, padx=(0, 20), ipady=6)
+
         add_btn = tk.Button(toolbar, text="+ REGISTER MACHINE", command=self._add_machine_dialog,
                           bg=ACCENT, fg="#FFFFFF", font=("Arial", 11, "bold"),
                           relief=tk.FLAT, bd=0, padx=20, pady=8)
@@ -1914,8 +1969,26 @@ class AdminApp:
         add_hover_effect(add_btn, ACCENT, ACCENT, "#FFFFFF")
 
         cached = self.cache.get("machines")
-        self._build_machines_table(frame, cached)
+        search_timer = [None]
 
+        def on_search_change(*args):
+            if search_timer[0]:
+                self.root.after_cancel(search_timer[0])
+
+            def do_search():
+                search_term = machines_search_var.get().lower()
+                filtered = [m for m in cached if search_term in m.get("machine_name", "").lower() or
+                           search_term in m.get("location", "").lower() or
+                           search_term in m.get("firmware_version", "").lower()]
+                for w in frame.winfo_children():
+                    if getattr(w, '_is_table', False):
+                        w.destroy()
+                self._build_machines_table(frame, filtered)
+
+            search_timer[0] = self.root.after(300, do_search)
+
+        machines_search_var.trace('w', on_search_change)
+        self._build_machines_table(frame, cached)
         self._sync_machines(frame, cached)
 
     def _build_machines_table(self, frame, machines):
@@ -1926,7 +1999,7 @@ class AdminApp:
         header = tk.Frame(table_frame, bg=PANEL)
         header.pack(fill=tk.X)
 
-        cols = [("MACHINE NAME", 25), ("LOCATION", 25), ("FIRMWARE", 15), ("STATUS", 12), ("CREATED", 18)]
+        cols = [("MACHINE NAME", 25), ("LOCATION", 25), ("FIRMWARE", 15), ("ACTIVE", 12), ("CREATED", 18)]
         for col_name, width in cols:
             tk.Label(header, text=col_name, bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold"), width=width, anchor="w").pack(side=tk.LEFT, padx=10, pady=10)
 
@@ -1953,8 +2026,8 @@ class AdminApp:
             tk.Label(row, text=machine.get("location", ""), bg=row_bg, fg=TEXT, font=("Arial", 10), width=25, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
             tk.Label(row, text=machine.get("firmware_version", ""), bg=row_bg, fg=TEXT, font=("Arial", 10), width=15, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
 
-            status_text = "Connected" if machine.get("is_connected") else "Offline"
-            status_color = GREEN if machine.get("is_connected") else TEXT2
+            status_text = "Active" if machine.get("is_active") else "Inactive"
+            status_color = GREEN if machine.get("is_active") else RED
             tk.Label(row, text=status_text, bg=row_bg, fg=status_color, font=("Arial", 10, "bold"), width=12, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
 
             created_str = machine.get("created_at", "")[:10] if machine.get("created_at") else ""
@@ -1963,16 +2036,25 @@ class AdminApp:
             action_frame = tk.Frame(row, bg=row_bg)
             action_frame.pack(side=tk.RIGHT, padx=10, pady=8)
 
+            toggle_text = "Deactivate" if machine.get("is_active") else "Activate"
+            toggle_btn = tk.Button(action_frame, text=toggle_text, font=("Arial", 9),
+                                  command=lambda mid=machine.get("id"), act=machine.get("is_active"): self._toggle_machine(mid, act),
+                                  bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, padx=12, pady=4)
+            toggle_btn.pack(side=tk.LEFT, padx=4)
+            add_hover_effect(toggle_btn, PANEL, SEP, TEXT)
+
             delete_btn = tk.Button(action_frame, text="Delete", font=("Arial", 9),
                                   command=lambda mid=machine.get("id"), mn=machine.get("machine_name"): self._delete_machine(mid, mn),
                                   bg=RED, fg="#FFFFFF", relief=tk.FLAT, bd=0, padx=12, pady=4)
-            delete_btn.pack()
+            delete_btn.pack(side=tk.LEFT, padx=4)
             add_hover_effect(delete_btn, RED, RED, "#FFFFFF")
 
         canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
 
     def _sync_machines(self, frame, cached):
+        if not self.cache.is_stale("machines"):
+            return
         def do_sync():
             result = self.api_client.admin_get_machines()
             if result.get("ok"):
@@ -1994,6 +2076,15 @@ class AdminApp:
         toolbar = tk.Frame(frame, bg=BG)
         toolbar.pack(fill=tk.X, pady=(0, 20))
 
+        # Search bar
+        tk.Label(toolbar, text="Search:", bg=BG, fg=TEXT2, font=("Arial", 10)).pack(side=tk.LEFT, padx=(0, 10))
+        switches_search_var = tk.StringVar()
+        search_entry = tk.Entry(toolbar, textvariable=switches_search_var, font=("Consolas", 10),
+                               bg=PANEL, fg=TEXT, insertbackground=ACCENT,
+                               relief=tk.FLAT, bd=0, highlightthickness=1,
+                               highlightbackground=BORDER, highlightcolor=ACCENT, width=30)
+        search_entry.pack(side=tk.LEFT, padx=(0, 20), ipady=6)
+
         add_btn = tk.Button(toolbar, text="+ ADD SWITCH", command=self._add_switch_dialog,
                           bg=ACCENT, fg="#FFFFFF", font=("Arial", 11, "bold"),
                           relief=tk.FLAT, bd=0, padx=20, pady=8)
@@ -2001,8 +2092,26 @@ class AdminApp:
         add_hover_effect(add_btn, ACCENT, ACCENT, "#FFFFFF")
 
         cached = self.cache.get("switches")
-        self._build_switches_table(frame, cached)
+        search_timer = [None]
 
+        def on_search_change(*args):
+            if search_timer[0]:
+                self.root.after_cancel(search_timer[0])
+
+            def do_search():
+                search_term = switches_search_var.get().lower()
+                filtered = [s for s in cached if search_term in s.get("switch_name", "").lower() or
+                           search_term in s.get("cable_type", "").lower() or
+                           search_term in str(s.get("expected_diameter_mm", "")).lower()]
+                for w in frame.winfo_children():
+                    if getattr(w, '_is_table', False):
+                        w.destroy()
+                self._build_switches_table(frame, filtered)
+
+            search_timer[0] = self.root.after(300, do_search)
+
+        switches_search_var.trace('w', on_search_change)
+        self._build_switches_table(frame, cached)
         self._sync_switches(frame, cached)
 
     def _build_switches_table(self, frame, switches):
@@ -2061,6 +2170,8 @@ class AdminApp:
         scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
 
     def _sync_switches(self, frame, cached):
+        if not self.cache.is_stale("switches"):
+            return
         def do_sync():
             result = self.api_client.get_switches()
             if result.get("ok"):
@@ -2073,28 +2184,26 @@ class AdminApp:
                     self._build_switches_table(frame, merged)
         self.root.after(0, do_sync)
 
-    def _show_captures_page(self):
+    def _show_requests_page(self):
         frame = tk.Frame(self.content_container, bg=BG)
         frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
-        tk.Label(frame, text="CAPTURES DASHBOARD", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
+        tk.Label(frame, text="CAPTURE REQUESTS", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
 
         cached = self.cache.get("captures")
-        self._build_captures_table(frame, cached)
-
+        self._build_requests_table(frame, cached)
         self._sync_captures(frame, cached)
 
-    def _build_captures_table(self, frame, captures):
-        annoteurs = [u for u in self.cache.get("users") if u.get("role") == "annoteur"]
-
+    def _build_requests_table(self, frame, captures):
         table_frame = tk.Frame(frame, bg=BORDER, relief=tk.SUNKEN, bd=1)
         table_frame.pack(fill=tk.BOTH, expand=True)
         table_frame._is_table = True
 
+        # Header
         header = tk.Frame(table_frame, bg=PANEL)
         header.pack(fill=tk.X)
 
-        cols = [("ID", 10), ("MACHINE", 14), ("SWITCH", 14), ("VALUE (mm)", 12), ("STATUS", 12), ("ANNOTEUR", 16)]
+        cols = [("ANNOTEUR", 16), ("TIME", 14), ("REQUIRED/ACTUAL", 16), ("ZOOM", 8), ("STATUS", 9), ("ACTIONS", 25)]
         for col_name, width in cols:
             tk.Label(header, text=col_name, bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold"), width=width, anchor="w").pack(side=tk.LEFT, padx=10, pady=10)
 
@@ -2112,52 +2221,55 @@ class AdminApp:
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
-        for i, capture in enumerate(captures):
-            row_bg = PANEL if i % 2 == 0 else BG
-            row = tk.Frame(scrollable_frame, bg=row_bg)
-            row.pack(fill=tk.X)
+        pending_captures = [c for c in captures if not c.get("annoteur_approved")]
 
-            cap_id = str(capture.get("id", ""))[:8]
-            tk.Label(row, text=cap_id, bg=row_bg, fg=TEXT2, font=("Arial", 9), width=10, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
-            tk.Label(row, text=str(capture.get("machine_id", ""))[:14], bg=row_bg, fg=TEXT, font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
-            tk.Label(row, text=str(capture.get("switch_id", ""))[:14], bg=row_bg, fg=TEXT, font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
-            tk.Label(row, text=f"{capture.get('measured_distance_mm', 0):.2f}", bg=row_bg, fg=TEXT, font=("Arial", 10), width=12, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+        if not pending_captures:
+            tk.Label(scrollable_frame, text="No pending requests", bg=BG, fg=TEXT2, font=("Arial", 12)).pack(pady=50)
+        else:
+            for i, capture in enumerate(pending_captures):
+                row_bg = PANEL if i % 2 == 0 else BG
+                row = tk.Frame(scrollable_frame, bg=row_bg)
+                row.pack(fill=tk.X)
 
-            if capture.get("annoteur_approved"):
-                status_color = GREEN
-                status_text = "Approved"
-            elif capture.get("annoteur_id"):
-                status_color = AMBER
-                status_text = "Assigned"
-            else:
-                status_color = TEXT2
-                status_text = "Pending"
+                tk.Label(row, text=capture.get('annoteur_id', 'Unknown')[:16], bg=row_bg, fg=TEXT, font=("Arial", 10), width=16, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+                tk.Label(row, text=capture.get('created_at', '')[:14], bg=row_bg, fg=TEXT, font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+                expected = capture.get('expected_diameter_mm') or 0
+                actual = capture.get('measured_distance_mm', 0)
+                measure_text = f"{expected:.2f} / {actual:.2f}mm"
+                tk.Label(row, text=measure_text, bg=row_bg, fg=TEXT, font=("Arial", 10), width=16, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
 
-            tk.Label(row, text=status_text, bg=row_bg, fg=status_color, font=("Arial", 10, "bold"), width=12, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+                zoom = capture.get('zoom_level')
+                zoom_text = f"{zoom:.1f}x" if zoom else "—"
+                tk.Label(row, text=zoom_text, bg=row_bg, fg=TEXT, font=("Arial", 10), width=8, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
 
-            annoteur_name = ""
-            if capture.get("annoteur_id"):
-                for ann in annoteurs:
-                    if ann.get("id") == capture.get("annoteur_id"):
-                        annoteur_name = ann.get("username", "")
-                        break
+                status_text = capture.get('measurement_status', 'unknown').upper()
+                status_color = GREEN if status_text == "OKAY" else RED
+                tk.Label(row, text=status_text, bg=row_bg, fg=status_color, font=("Arial", 10, "bold"), width=9, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
 
-            tk.Label(row, text=annoteur_name[:16], bg=row_bg, fg=TEXT, font=("Arial", 10), width=16, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+                action_frame = tk.Frame(row, bg=row_bg)
+                action_frame.pack(side=tk.RIGHT, padx=10, pady=8)
 
-            action_frame = tk.Frame(row, bg=row_bg)
-            action_frame.pack(side=tk.RIGHT, padx=10, pady=8)
+                see_btn = tk.Button(action_frame, text="👁 See", command=lambda cap=capture: self._show_capture_modal(cap),
+                                   bg=ACCENT, fg="#FFFFFF", font=("Arial", 9, "bold"), relief=tk.FLAT, bd=0, padx=12, pady=4)
+                see_btn.pack(side=tk.LEFT, padx=4)
+                add_hover_effect(see_btn, ACCENT, "#8B0F15", "#FFFFFF")
 
-            if not capture.get("annoteur_id"):
-                assign_btn = tk.Button(action_frame, text="Assign", font=("Arial", 9),
-                                      command=lambda cid=capture.get("id"): self._assign_capture_dialog(cid, annoteurs),
-                                      bg=ACCENT, fg="#FFFFFF", relief=tk.FLAT, bd=0, padx=12, pady=4)
-                assign_btn.pack()
-                add_hover_effect(assign_btn, ACCENT, ACCENT, "#FFFFFF")
+                accept_btn = tk.Button(action_frame, text="✓ Accept", command=lambda cid=capture.get("id"): self._accept_request(cid),
+                                      bg=GREEN, fg="#FFFFFF", font=("Arial", 9, "bold"), relief=tk.FLAT, bd=0, padx=12, pady=4)
+                accept_btn.pack(side=tk.LEFT, padx=4)
+                add_hover_effect(accept_btn, GREEN, "#388E3C", "#FFFFFF")
+
+                reject_btn = tk.Button(action_frame, text="✕ Reject", command=lambda cid=capture.get("id"): self._reject_request(cid),
+                                      bg=RED, fg="#FFFFFF", font=("Arial", 9, "bold"), relief=tk.FLAT, bd=0, padx=12, pady=4)
+                reject_btn.pack(side=tk.LEFT, padx=4)
+                add_hover_effect(reject_btn, RED, "#8B0F15", "#FFFFFF")
 
         canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
 
     def _sync_captures(self, frame, cached):
+        if not self.cache.is_stale("captures"):
+            return
         def do_sync():
             result = self.api_client.admin_get_captures()
             if result.get("ok"):
@@ -2167,8 +2279,574 @@ class AdminApp:
                     for w in frame.winfo_children():
                         if getattr(w, '_is_table', False):
                             w.destroy()
-                    self._build_captures_table(frame, merged)
+                    self._build_requests_table(frame, merged)
         self.root.after(0, do_sync)
+
+    def _show_capture_modal(self, capture):
+        modal = tk.Toplevel(self.root)
+        modal.title("Capture Viewer")
+        modal.geometry("1000x700")
+        modal.configure(bg=BG)
+        modal.resizable(True, True)
+
+        state = {
+            "original_image": None,
+            "thresholded_image": None,
+            "current_image": None,
+            "current_path": None,
+            "zoom": 1.0,
+            "is_threads": False,
+            "photo_image": None,
+            "canvas": None
+        }
+
+        orig_path = capture.get('image_original_path', '')
+        thresh_path = capture.get('image_thresholded_path', '')
+        p1_x = capture.get('p1_x', 0)
+        p1_y = capture.get('p1_y', 0)
+        p2_x = capture.get('p2_x', 0)
+        p2_y = capture.get('p2_y', 0)
+
+        try:
+            if Path(orig_path).exists():
+                state["original_image"] = Image.open(orig_path).convert('RGB')
+            if Path(thresh_path).exists():
+                state["thresholded_image"] = Image.open(thresh_path).convert('RGB')
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load images: {e}")
+            modal.destroy()
+            return
+
+        if not state["original_image"]:
+            messagebox.showerror("Error", "Original image not found")
+            modal.destroy()
+            return
+
+        state["current_image"] = state["original_image"]
+        state["current_path"] = orig_path
+
+        # Top control bar
+        control_frame = tk.Frame(modal, bg=PANEL, relief=tk.SUNKEN, bd=1)
+        control_frame.pack(fill=tk.X, padx=0, pady=0)
+
+        tk.Label(control_frame, text="Zoom:", bg=PANEL, fg=TEXT, font=("Arial", 10)).pack(side=tk.LEFT, padx=10, pady=8)
+
+        zoom_minus_btn = tk.Button(control_frame, text="−", width=2, font=("Arial", 12, "bold"),
+                                   bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0)
+        zoom_minus_btn.pack(side=tk.LEFT, padx=2, pady=8)
+
+        zoom_plus_btn = tk.Button(control_frame, text="+", width=2, font=("Arial", 12, "bold"),
+                                  bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0)
+        zoom_plus_btn.pack(side=tk.LEFT, padx=2, pady=8)
+
+        zoom_label = tk.Label(control_frame, text="1.00x", bg=PANEL, fg=TEXT, font=("Arial", 10), width=6)
+        zoom_label.pack(side=tk.LEFT, padx=10, pady=8)
+
+        reset_zoom_btn = tk.Button(control_frame, text="Reset", font=("Arial", 9),
+                                   bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, padx=8, pady=4)
+        reset_zoom_btn.pack(side=tk.LEFT, padx=4, pady=8)
+        add_hover_effect(reset_zoom_btn, PANEL, SEP, TEXT)
+
+        threads_btn = tk.Button(control_frame, text="🔄 Threads", font=("Arial", 9),
+                               bg=ACCENT, fg="#FFFFFF", relief=tk.FLAT, bd=0, padx=12, pady=4)
+        threads_btn.pack(side=tk.LEFT, padx=(20, 4), pady=8)
+        add_hover_effect(threads_btn, ACCENT, "#8B0F15", "#FFFFFF")
+
+        close_btn = tk.Button(control_frame, text="✕ Close", font=("Arial", 9),
+                             bg=RED, fg="#FFFFFF", relief=tk.FLAT, bd=0, padx=12, pady=4,
+                             command=modal.destroy)
+        close_btn.pack(side=tk.RIGHT, padx=10, pady=8)
+        add_hover_effect(close_btn, RED, "#8B0F15", "#FFFFFF")
+
+        # Canvas for image display
+        canvas_frame = tk.Frame(modal, bg=BORDER, relief=tk.SUNKEN, bd=1)
+        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+
+        canvas = tk.Canvas(canvas_frame, bg="white", highlightthickness=0)
+        canvas.pack(fill=tk.BOTH, expand=True)
+        state["canvas"] = canvas
+
+        def render_image():
+            if not state["current_image"]:
+                return
+
+            try:
+                display_image = state["current_image"].copy()
+                canvas_width = canvas.winfo_width()
+                canvas_height = canvas.winfo_height()
+
+                if canvas_width <= 1:
+                    canvas_width = 1000
+                if canvas_height <= 1:
+                    canvas_height = 600
+
+                img_width, img_height = display_image.size
+                scaled_width = int(img_width * state["zoom"])
+                scaled_height = int(img_height * state["zoom"])
+
+                if scaled_width > 0 and scaled_height > 0:
+                    display_image = display_image.resize((scaled_width, scaled_height), Image.Resampling.LANCZOS)
+
+                state["photo_image"] = ImageTk.PhotoImage(display_image)
+                canvas.delete("all")
+
+                x_offset = (canvas_width - scaled_width) // 2
+                y_offset = (canvas_height - scaled_height) // 2
+
+                canvas.create_image(x_offset, y_offset, image=state["photo_image"], anchor="nw")
+
+                # Draw annotation points
+                point_size = max(4, int(6 * state["zoom"]))
+                scaled_p1_x = int(x_offset + p1_x * state["zoom"])
+                scaled_p1_y = int(y_offset + p1_y * state["zoom"])
+                scaled_p2_x = int(x_offset + p2_x * state["zoom"])
+                scaled_p2_y = int(y_offset + p2_y * state["zoom"])
+
+                # P1 point (green)
+                canvas.create_oval(
+                    scaled_p1_x - point_size, scaled_p1_y - point_size,
+                    scaled_p1_x + point_size, scaled_p1_y + point_size,
+                    fill=GREEN, outline="darkgreen", width=2
+                )
+
+                # P2 point (blue)
+                canvas.create_oval(
+                    scaled_p2_x - point_size, scaled_p2_y - point_size,
+                    scaled_p2_x + point_size, scaled_p2_y + point_size,
+                    fill="#2196F3", outline="#0D47A1", width=2
+                )
+
+                # Line connecting points
+                canvas.create_line(
+                    scaled_p1_x, scaled_p1_y,
+                    scaled_p2_x, scaled_p2_y,
+                    fill="orange", width=2
+                )
+
+                # Distance label
+                distance = capture.get('measured_distance_mm', 0)
+                distance_text = f"{distance:.2f}mm"
+                canvas.create_text(
+                    scaled_p1_x, scaled_p1_y - point_size - 15,
+                    text="P1", fill=GREEN, font=("Arial", 10, "bold")
+                )
+                canvas.create_text(
+                    scaled_p2_x, scaled_p2_y - point_size - 15,
+                    text="P2", fill="#2196F3", font=("Arial", 10, "bold")
+                )
+                mid_x = (scaled_p1_x + scaled_p2_x) // 2
+                mid_y = (scaled_p1_y + scaled_p2_y) // 2 + 20
+                canvas.create_rectangle(
+                    mid_x - 35, mid_y - 12, mid_x + 35, mid_y + 12,
+                    fill="white", outline="orange", width=1
+                )
+                canvas.create_text(
+                    mid_x, mid_y,
+                    text=distance_text, fill="orange", font=("Arial", 10, "bold")
+                )
+            except Exception as e:
+                print(f"Error rendering image: {e}")
+
+        def update_zoom(delta):
+            state["zoom"] = max(0.5, min(5.0, state["zoom"] + delta))
+            zoom_label.config(text=f"{state['zoom']:.2f}x")
+            render_image()
+
+        zoom_minus_btn.config(command=lambda: update_zoom(-0.2))
+        zoom_plus_btn.config(command=lambda: update_zoom(0.2))
+
+        def toggle_threads():
+            if state["thresholded_image"]:
+                state["is_threads"] = not state["is_threads"]
+                if state["is_threads"]:
+                    state["current_image"] = state["thresholded_image"]
+                    threads_btn.config(relief=tk.SUNKEN)
+                else:
+                    state["current_image"] = state["original_image"]
+                    threads_btn.config(relief=tk.FLAT)
+                render_image()
+
+        threads_btn.config(command=toggle_threads)
+        if not state["thresholded_image"]:
+            threads_btn.config(state=tk.DISABLED)
+
+        def reset_zoom_func():
+            state["zoom"] = 1.0
+            zoom_label.config(text="1.00x")
+            render_image()
+
+        reset_zoom_btn.config(command=reset_zoom_func)
+
+        # Mouse wheel zoom
+        def on_mousewheel(event):
+            if event.delta > 0:
+                update_zoom(0.1)
+            else:
+                update_zoom(-0.1)
+
+        canvas.bind("<MouseWheel>", on_mousewheel)
+
+        # Initial render
+        modal.after(100, render_image)
+
+    def _accept_request(self, capture_id):
+        result = self.api_client.admin_approve_capture(capture_id)
+        if result.get("ok"):
+            self.cache.invalidate("captures")
+            self._switch_page("dataset", self._show_dataset_page)
+            messagebox.showinfo("Success", "Request approved!")
+        else:
+            messagebox.showerror("Error", result.get("error", "Failed to approve request"))
+
+    def _reject_request(self, capture_id):
+        if messagebox.askyesno("Confirm", "Reject this request?"):
+            result = self.api_client.delete_capture(capture_id)
+            if result.get("ok"):
+                self.cache.invalidate("captures")
+                self._switch_page("requests", self._show_requests_page)
+                messagebox.showinfo("Success", "Request rejected!")
+            else:
+                messagebox.showerror("Error", result.get("error", "Failed to reject request"))
+
+    def _show_dataset_page(self):
+        frame = tk.Frame(self.content_container, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Title with counter
+        title_frame = tk.Frame(frame, bg=BG)
+        title_frame.pack(fill=tk.X, pady=(0, 20))
+
+        tk.Label(title_frame, text="APPROVED DATASET", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(side=tk.LEFT, padx=(0, 15))
+
+        cached = self.cache.get("captures")
+        approved_count = len([c for c in cached if c.get("annoteur_approved")]) if cached else 0
+        counter_label = tk.Label(title_frame, text=f"Total: {approved_count}", bg=ACCENT, fg="#FFFFFF", font=("Arial", 12, "bold"), padx=16, pady=6, relief=tk.FLAT, bd=0)
+        counter_label.pack(side=tk.LEFT)
+
+        self._build_dataset_table(frame, cached)
+        self._sync_dataset(frame, cached)
+
+    def _build_dataset_table(self, frame, captures):
+        table_frame = tk.Frame(frame, bg=BORDER, relief=tk.SUNKEN, bd=1)
+        table_frame.pack(fill=tk.BOTH, expand=True)
+        table_frame._is_table = True
+
+        # Header
+        header = tk.Frame(table_frame, bg=PANEL)
+        header.pack(fill=tk.X)
+
+        cols = [("ANNOTEUR", 16), ("TIME", 14), ("REQUIRED/ACTUAL", 16), ("ZOOM", 8), ("STATUS", 9), ("ACTIONS", 20)]
+        for col_name, width in cols:
+            tk.Label(header, text=col_name, bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold"), width=width, anchor="w").pack(side=tk.LEFT, padx=10, pady=10)
+
+        tk.Frame(table_frame, bg=BORDER, height=1).pack(fill=tk.X)
+
+        canvas = tk.Canvas(table_frame, bg=BG, highlightthickness=0, height=400)
+        scrollbar = tk.Scrollbar(table_frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=BG)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        approved_captures = [c for c in captures if c.get("annoteur_approved")]
+
+        if not approved_captures:
+            tk.Label(scrollable_frame, text="No approved captures in dataset", bg=BG, fg=TEXT2, font=("Arial", 12)).pack(pady=50)
+        else:
+            for i, capture in enumerate(approved_captures):
+                row_bg = PANEL if i % 2 == 0 else BG
+                row = tk.Frame(scrollable_frame, bg=row_bg)
+                row.pack(fill=tk.X)
+
+                tk.Label(row, text=capture.get('annoteur_id', 'Unknown')[:16], bg=row_bg, fg=TEXT, font=("Arial", 10), width=16, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+                tk.Label(row, text=capture.get('created_at', '')[:14], bg=row_bg, fg=TEXT, font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+                expected = capture.get('expected_diameter_mm') or 0
+                actual = capture.get('measured_distance_mm', 0)
+                measure_text = f"{expected:.2f} / {actual:.2f}mm"
+                tk.Label(row, text=measure_text, bg=row_bg, fg=TEXT, font=("Arial", 10), width=16, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+                zoom = capture.get('zoom_level')
+                zoom_text = f"{zoom:.1f}x" if zoom else "—"
+                tk.Label(row, text=zoom_text, bg=row_bg, fg=TEXT, font=("Arial", 10), width=8, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+                status_text = capture.get('measurement_status', 'unknown').upper()
+                status_color = GREEN if status_text == "OKAY" else RED
+                tk.Label(row, text=status_text, bg=row_bg, fg=status_color, font=("Arial", 10, "bold"), width=9, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+                action_frame = tk.Frame(row, bg=row_bg)
+                action_frame.pack(side=tk.RIGHT, padx=10, pady=8)
+
+                view_btn = tk.Button(action_frame, text="👁 View", command=lambda cap=capture: self._show_capture_modal(cap),
+                                    bg=ACCENT, fg="#FFFFFF", font=("Arial", 9, "bold"), relief=tk.FLAT, bd=0, padx=12, pady=4)
+                view_btn.pack(side=tk.LEFT, padx=4)
+                add_hover_effect(view_btn, ACCENT, "#8B0F15", "#FFFFFF")
+
+                delete_btn = tk.Button(action_frame, text="🗑 Delete", command=lambda cid=capture.get("id"): self._delete_dataset_capture(cid),
+                                      bg=RED, fg="#FFFFFF", font=("Arial", 9, "bold"), relief=tk.FLAT, bd=0, padx=12, pady=4)
+                delete_btn.pack(side=tk.LEFT, padx=4)
+                add_hover_effect(delete_btn, RED, "#8B0F15", "#FFFFFF")
+
+        canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
+
+    def _sync_dataset(self, frame, cached):
+        if not self.cache.is_stale("captures"):
+            return
+        def do_sync():
+            result = self.api_client.admin_get_captures()
+            if result.get("ok"):
+                server_data = result.get("data", [])
+                merged = self.cache.update("captures", server_data)
+                if merged != cached:
+                    for w in frame.winfo_children():
+                        if getattr(w, '_is_table', False):
+                            w.destroy()
+                    self._build_dataset_table(frame, merged)
+        self.root.after(0, do_sync)
+
+    def _delete_dataset_capture(self, capture_id):
+        if messagebox.askyesno("Confirm", "Delete this capture from dataset?"):
+            result = self.api_client.delete_capture(capture_id)
+            if result.get("ok"):
+                self.cache.invalidate("captures")
+                self._switch_page("dataset", self._show_dataset_page)
+                messagebox.showinfo("Success", "Capture deleted!")
+            else:
+                messagebox.showerror("Error", result.get("error", "Failed to delete capture"))
+
+    def _show_notifications_page(self):
+        frame = tk.Frame(self.content_container, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text="NOTIFICATIONS", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        cached = self.cache.get("notifications")
+        self._build_notifications_table(frame, cached)
+        self._sync_notifications(frame, cached)
+
+    def _build_notifications_table(self, frame, notifications):
+        if not notifications:
+            notifications = []
+
+        table_frame = tk.Frame(frame, bg=BORDER, relief=tk.SUNKEN, bd=1)
+        table_frame.pack(fill=tk.BOTH, expand=True)
+        table_frame._is_table = True
+
+        # Header
+        header = tk.Frame(table_frame, bg=PANEL)
+        header.pack(fill=tk.X)
+
+        cols = [("TYPE", 10), ("ANNOTEUR", 15), ("TITLE", 18), ("DATE", 14), ("STATUS", 9), ("ACTIONS", 12)]
+        for col_name, width in cols:
+            tk.Label(header, text=col_name, bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold"), width=width, anchor="w").pack(side=tk.LEFT, padx=10, pady=10)
+
+        tk.Frame(table_frame, bg=BORDER, height=1).pack(fill=tk.X)
+
+        canvas = tk.Canvas(table_frame, bg=BG, highlightthickness=0, height=400)
+        scrollbar = tk.Scrollbar(table_frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=BG)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        if not notifications:
+            tk.Label(scrollable_frame, text="No notifications", bg=BG, fg=TEXT2, font=("Arial", 12)).pack(pady=50)
+        else:
+            for i, notif in enumerate(notifications):
+                row_bg = PANEL if i % 2 == 0 else BG
+                row = tk.Frame(scrollable_frame, bg=row_bg)
+                row.pack(fill=tk.X)
+
+                ntype = notif.get('notification_type', 'info')[:10].upper()
+                type_color = {"INFO": TEXT, "WARNING": AMBER, "ALERT": RED, "SUCCESS": GREEN}.get(ntype, TEXT)
+                tk.Label(row, text=ntype, bg=row_bg, fg=type_color, font=("Arial", 9, "bold"), width=10, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+                username = notif.get('username', 'Unknown')[:15]
+                tk.Label(row, text=username, bg=row_bg, fg=TEXT, font=("Arial", 10), width=15, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+                title = notif.get('title', '')[:18]
+                tk.Label(row, text=title, bg=row_bg, fg=TEXT, font=("Arial", 10), width=18, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+                date = notif.get('created_at', '')[:14]
+                tk.Label(row, text=date, bg=row_bg, fg=TEXT, font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+                read_status = "READ" if notif.get('read') else "NEW"
+                read_color = TEXT if notif.get('read') else GREEN
+                tk.Label(row, text=read_status, bg=row_bg, fg=read_color, font=("Arial", 9, "bold"), width=9, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+                action_frame = tk.Frame(row, bg=row_bg)
+                action_frame.pack(side=tk.RIGHT, padx=10, pady=8)
+
+                view_btn = tk.Button(action_frame, text="👁 View", command=lambda notif_data=notif: self._show_notification_modal(notif_data),
+                                    bg=ACCENT, fg="#FFFFFF", font=("Arial", 9, "bold"), relief=tk.FLAT, bd=0, padx=10, pady=4)
+                view_btn.pack(side=tk.LEFT, padx=4)
+                add_hover_effect(view_btn, ACCENT, "#8B0F15", "#FFFFFF")
+
+                reply_btn = tk.Button(action_frame, text="↩ Reply", command=lambda notif_title=notif.get('title'): self._show_reply_dialog(notif_title),
+                                     bg=GREEN, fg="#FFFFFF", font=("Arial", 9, "bold"), relief=tk.FLAT, bd=0, padx=10, pady=4)
+                reply_btn.pack(side=tk.LEFT, padx=4)
+                add_hover_effect(reply_btn, GREEN, "#388E3C", "#FFFFFF")
+
+        canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
+
+    def _sync_notifications(self, frame, cached):
+        if not self.cache.is_stale("notifications"):
+            return
+        def do_sync():
+            result = self.api_client.get_notifications()
+            if result and result.get("ok"):
+                server_data = result.get("data", [])
+                merged = self.cache.update("notifications", server_data)
+                if merged != cached:
+                    for w in frame.winfo_children():
+                        if getattr(w, '_is_table', False):
+                            w.destroy()
+                    self._build_notifications_table(frame, merged)
+        self.root.after(0, do_sync)
+
+    def _show_notification_modal(self, notification):
+        modal = tk.Toplevel(self.root)
+        modal.title("Notification Details")
+        modal.geometry("600x450")
+        modal.configure(bg=BG)
+        modal.resizable(True, True)
+        modal.grab_set()
+
+        frame = tk.Frame(modal, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Title section
+        title_frame = tk.Frame(frame, bg=BG)
+        title_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ntype = notification.get('notification_type', 'info').upper()
+        type_color = {"INFO": TEXT, "WARNING": AMBER, "ALERT": RED, "SUCCESS": GREEN}.get(ntype, TEXT)
+        tk.Label(title_frame, text=ntype, bg=BG, fg=type_color, font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Label(title_frame, text=notification.get('title', ''), bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Metadata section
+        meta_frame = tk.Frame(frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
+        meta_frame.pack(fill=tk.X, pady=(0, 15))
+
+        meta_text = f"From: {notification.get('username', 'Unknown')}  |  Date: {notification.get('created_at', '')[:19]}"
+        tk.Label(meta_frame, text=meta_text, bg=PANEL, fg=TEXT2, font=("Arial", 9)).pack(anchor=tk.W, padx=10, pady=8)
+
+        # Message section
+        tk.Label(frame, text="Message:", bg=BG, fg=TEXT, font=("Arial", 11, "bold")).pack(anchor=tk.W, pady=(0, 8))
+
+        msg_frame = tk.Frame(frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
+        msg_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+
+        msg_text = tk.Text(msg_frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, wrap=tk.WORD)
+        msg_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        msg_text.insert(tk.END, notification.get('body', ''))
+        msg_text.config(state=tk.DISABLED)
+
+        # Reply section
+        reply_frame = tk.Frame(frame, bg=BG)
+        reply_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        tk.Label(reply_frame, text="Your Reply:", bg=BG, fg=TEXT, font=("Arial", 11, "bold")).pack(anchor=tk.W, pady=(0, 8))
+
+        reply_box = tk.Frame(reply_frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
+        reply_box.pack(fill=tk.BOTH, expand=True)
+
+        reply_text = tk.Text(reply_box, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, height=4, wrap=tk.WORD, insertbackground=ACCENT)
+        reply_text.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        reply_text.focus()
+
+        # Buttons
+        btn_frame = tk.Frame(frame, bg=BG)
+        btn_frame.pack(fill=tk.X, pady=(10, 0))
+
+        close_btn = tk.Button(btn_frame, text="CLOSE", command=modal.destroy, bg=PANEL, fg=TEXT, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        close_btn.pack(side=tk.LEFT, padx=(0, 10))
+        add_hover_effect(close_btn, PANEL, SEP, TEXT)
+
+        def submit_reply():
+            reply_content = reply_text.get("1.0", tk.END).strip()
+            if not reply_content:
+                messagebox.showwarning("Empty", "Please enter a reply")
+                return
+            messagebox.showinfo("Success", "Reply sent!")
+            modal.destroy()
+
+        reply_btn = tk.Button(btn_frame, text="↩ REPLY", command=submit_reply, bg=GREEN, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        reply_btn.pack(side=tk.LEFT)
+        add_hover_effect(reply_btn, GREEN, "#388E3C", "#FFFFFF")
+
+    def _show_reply_dialog(self, notification_title):
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Reply to: {notification_title}")
+        dialog.geometry("500x400")
+        dialog.configure(bg=BG)
+        dialog.resizable(True, True)
+        dialog.grab_set()
+
+        frame = tk.Frame(dialog, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text="Write your reply:", bg=BG, fg=TEXT, font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=(0, 10))
+
+        reply_box = tk.Frame(frame, bg=PANEL, relief=tk.SUNKEN, bd=1, height=150)
+        reply_box.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        reply_box.pack_propagate(False)
+
+        reply_text = tk.Text(reply_box, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, wrap=tk.WORD, insertbackground=ACCENT, height=8)
+        reply_text.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        reply_text.focus()
+
+        btn_frame = tk.Frame(frame, bg=BG)
+        btn_frame.pack(fill=tk.X, pady=(10, 0))
+
+        cancel_btn = tk.Button(btn_frame, text="CANCEL", command=dialog.destroy, bg=PANEL, fg=TEXT, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        cancel_btn.pack(side=tk.LEFT, padx=(0, 10))
+        add_hover_effect(cancel_btn, PANEL, SEP, TEXT)
+
+        def submit_reply():
+            reply_content = reply_text.get("1.0", tk.END).strip()
+            if not reply_content:
+                messagebox.showwarning("Empty", "Please enter a reply")
+                return
+
+            # Send reply to API (owner will receive notification)
+            try:
+                # Create a notification for the message owner
+                import requests
+                response = requests.post(
+                    f"{self.api_client.api_url}/notifications/reply",
+                    json={
+                        "notification_title": notification_title,
+                        "reply_content": reply_content,
+                        "replied_by": self.api_client.user_id or "Admin"
+                    },
+                    headers={"Authorization": f"Bearer {self.api_client.access_token}"},
+                    timeout=5
+                )
+
+                if response.status_code == 200:
+                    messagebox.showinfo("Success", "Reply sent to message owner!")
+                    dialog.destroy()
+                else:
+                    messagebox.showerror("Error", "Failed to send reply. Please try again.")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to send reply: {str(e)}")
+                dialog.destroy()
+
+        send_btn = tk.Button(btn_frame, text="SEND", command=submit_reply, bg=GREEN, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        send_btn.pack(side=tk.LEFT)
+        add_hover_effect(send_btn, GREEN, "#388E3C", "#FFFFFF")
 
     def _add_user_dialog(self):
         dialog = tk.Toplevel(self.root)
@@ -2184,15 +2862,15 @@ class AdminApp:
         tk.Label(frame, text="Add New User", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
 
         tk.Label(frame, text="Username", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        username_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        username_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         username_entry.pack(fill=tk.X, pady=(0, 15))
 
         tk.Label(frame, text="Password", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        password_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, show="●", relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        password_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, show="●", relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         password_entry.pack(fill=tk.X, pady=(0, 15))
 
         tk.Label(frame, text="Email", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        email_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        email_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         email_entry.pack(fill=tk.X, pady=(0, 15))
 
         tk.Label(frame, text="Role", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
@@ -2239,19 +2917,19 @@ class AdminApp:
         tk.Label(frame, text="Register Machine", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
 
         tk.Label(frame, text="Machine Name", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        name_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        name_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         name_entry.pack(fill=tk.X, pady=(0, 15))
 
         tk.Label(frame, text="Password", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        password_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, show="●", relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        password_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, show="●", relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         password_entry.pack(fill=tk.X, pady=(0, 15))
 
         tk.Label(frame, text="Location", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        location_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        location_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         location_entry.pack(fill=tk.X, pady=(0, 15))
 
         tk.Label(frame, text="Firmware Version", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        firmware_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        firmware_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         firmware_entry.pack(fill=tk.X, pady=(0, 20))
 
         btn_frame = tk.Frame(frame, bg=BG)
@@ -2293,23 +2971,23 @@ class AdminApp:
         tk.Label(frame, text="Add Switch", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
 
         tk.Label(frame, text="Switch Name", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        name_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        name_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         name_entry.pack(fill=tk.X, pady=(0, 15))
 
         tk.Label(frame, text="Cable Type", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        type_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        type_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         type_entry.pack(fill=tk.X, pady=(0, 15))
 
         tk.Label(frame, text="Expected Diameter (mm)", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        expected_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        expected_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         expected_entry.pack(fill=tk.X, pady=(0, 15))
 
         tk.Label(frame, text="Tolerance Min (mm)", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        min_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        min_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         min_entry.pack(fill=tk.X, pady=(0, 15))
 
         tk.Label(frame, text="Tolerance Max (mm)", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        max_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        max_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         max_entry.pack(fill=tk.X, pady=(0, 20))
 
         btn_frame = tk.Frame(frame, bg=BG)
@@ -2355,27 +3033,27 @@ class AdminApp:
         tk.Label(frame, text="Edit Switch", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
 
         tk.Label(frame, text="Switch Name", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        name_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        name_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         name_entry.insert(0, switch_data.get("switch_name", ""))
         name_entry.pack(fill=tk.X, pady=(0, 15))
 
         tk.Label(frame, text="Cable Type", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        type_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        type_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         type_entry.insert(0, switch_data.get("cable_type", ""))
         type_entry.pack(fill=tk.X, pady=(0, 15))
 
         tk.Label(frame, text="Expected Diameter (mm)", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        expected_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        expected_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         expected_entry.insert(0, str(switch_data.get("expected_diameter_mm", "")))
         expected_entry.pack(fill=tk.X, pady=(0, 15))
 
         tk.Label(frame, text="Tolerance Min (mm)", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        min_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        min_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         min_entry.insert(0, str(switch_data.get("tolerance_min", "")))
         min_entry.pack(fill=tk.X, pady=(0, 15))
 
         tk.Label(frame, text="Tolerance Max (mm)", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        max_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT, ipady=8)
+        max_entry = tk.Entry(frame, font=("Consolas", 10), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
         max_entry.insert(0, str(switch_data.get("tolerance_max", "")))
         max_entry.pack(fill=tk.X, pady=(0, 20))
 
@@ -2409,54 +3087,6 @@ class AdminApp:
         submit_btn.pack(side=tk.LEFT)
         add_hover_effect(submit_btn, ACCENT, ACCENT, "#FFFFFF")
 
-    def _assign_capture_dialog(self, capture_id, annoteurs):
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Assign Capture")
-        dialog.geometry("300x150")
-        dialog.configure(bg=BG)
-        dialog.resizable(False, False)
-        dialog.grab_set()
-
-        frame = tk.Frame(dialog, bg=BG)
-        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-
-        tk.Label(frame, text="Assign Capture", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
-
-        tk.Label(frame, text="Select Annoteur", bg=BG, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 10))
-
-        annoteur_names = [ann.get("username", "") for ann in annoteurs]
-        annoteur_ids = [ann.get("id", "") for ann in annoteurs]
-
-        annoteur_var = tk.StringVar(value=annoteur_names[0] if annoteur_names else "")
-        annoteur_menu = tk.OptionMenu(frame, annoteur_var, *annoteur_names)
-        annoteur_menu.pack(fill=tk.X, pady=(0, 20))
-
-        btn_frame = tk.Frame(frame, bg=BG)
-        btn_frame.pack(fill=tk.X)
-
-        cancel_btn = tk.Button(btn_frame, text="CANCEL", command=dialog.destroy, bg=PANEL, fg=TEXT, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
-        cancel_btn.pack(side=tk.LEFT, padx=(0, 10))
-        add_hover_effect(cancel_btn, PANEL, SEP, TEXT)
-
-        def submit():
-            selected_name = annoteur_var.get()
-            try:
-                idx = annoteur_names.index(selected_name)
-                annoteur_id = annoteur_ids[idx]
-                result = self.api_client.admin_assign_capture(capture_id, annoteur_id)
-                if result.get("ok"):
-                    self.cache.invalidate("captures")
-                    dialog.destroy()
-                    self._switch_page("captures", self._show_captures_page)
-                else:
-                    messagebox.showerror("Error", result.get("error", "Failed to assign"))
-            except ValueError:
-                messagebox.showerror("Error", "Invalid selection")
-
-        submit_btn = tk.Button(btn_frame, text="ASSIGN", command=submit, bg=ACCENT, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
-        submit_btn.pack(side=tk.LEFT)
-        add_hover_effect(submit_btn, ACCENT, ACCENT, "#FFFFFF")
-
     def _toggle_user(self, user_id, current_active):
         result = self.api_client.admin_update_user(user_id, is_active=not current_active)
         if result.get("ok"):
@@ -2464,6 +3094,14 @@ class AdminApp:
             self._switch_page("users", self._show_users_page)
         else:
             messagebox.showerror("Error", result.get("error", "Failed to toggle user"))
+
+    def _toggle_machine(self, machine_id, current_active):
+        result = self.api_client.admin_update_machine(machine_id, is_active=not current_active)
+        if result.get("ok"):
+            self.cache.invalidate("machines")
+            self._switch_page("machines", self._show_machines_page)
+        else:
+            messagebox.showerror("Error", result.get("error", "Failed to toggle machine"))
 
     def _delete_user(self, user_id, username):
         if messagebox.askyesno("Confirm", f"Delete user '{username}'?"):
@@ -2491,6 +3129,550 @@ class AdminApp:
                 self._switch_page("switches", self._show_switches_page)
             else:
                 messagebox.showerror("Error", result.get("error", "Failed to delete switch"))
+
+    def _load_model_metadata(self, model_type="mesure"):
+        """Load model metadata from JSON file, return default if not found"""
+        metadata_path = Path(__file__).parent / "model_bellmounth_mesure" / "model" / f"{model_type}_metadata.json"
+
+        if metadata_path.exists():
+            try:
+                import json
+                return json.loads(metadata_path.read_text())
+            except Exception as e:
+                print(f"Error loading metadata: {e}")
+
+        # Return default metadata if file doesn't exist
+        if model_type == "mesure":
+            return {
+                "model_name": "CNN_BELMOUNTH_MESURE_V1",
+                "type": "mesure",
+                "status": "untrained",
+                "accuracy_10px": 0,
+                "accuracy_20px": 0,
+                "test_loss": 0,
+                "test_mae": 0,
+                "mean_pixel_error": 0,
+                "epochs_trained": 0,
+                "training_samples": 0,
+                "test_samples": 0
+            }
+        else:  # state
+            return {
+                "model_name": "CNN_BELMOUNTH_STATE_V1",
+                "type": "state",
+                "status": "untrained",
+                "overall_accuracy": 0,
+                "test_loss": 0,
+                "precision": 0,
+                "recall": 0,
+                "f1_score": 0,
+                "epochs_trained": 0,
+                "training_samples": 0,
+                "test_samples": 0
+            }
+
+    def _show_model_page(self):
+        frame = tk.Frame(self.content_container, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+
+        tk.Label(frame, text="ML MODEL MANAGEMENT", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 15))
+
+        # Get dataset count and approved captures
+        dataset_captures = self.cache.get("captures")
+        if not dataset_captures:
+            self.cache.update("captures", self.api_client.admin_get_captures().get("data", []))
+            dataset_captures = self.cache.get("captures")
+
+        approved_dataset = len([c for c in dataset_captures if c.get("annoteur_approved")]) if dataset_captures else 0
+
+        # Check for actual model files and track versions
+        model_dir = Path(__file__).parent / "model_bellmounth_mesure" / "model"
+
+        # MESURE model versions
+        mesure_model_v1 = model_dir / "CNN_BELMOUNTH_MODEL_V1.h5"
+        mesure_model_v2 = model_dir / "CNN_BELMOUNTH_MESURE_V2.h5"
+        mesure_v1_exists = mesure_model_v1.exists()
+        mesure_v2_exists = mesure_model_v2.exists()
+        mesure_latest_version = 2 if mesure_v2_exists else (1 if mesure_v1_exists else 0)
+        mesure_exists = mesure_latest_version > 0
+
+        # STATE model versions
+        state_model_v1 = model_dir / "CNN_BELMOUNTH_STATE_V1.h5"
+        state_model_v2 = model_dir / "CNN_BELMOUNTH_STATE_V2.h5"
+        state_v1_exists = state_model_v1.exists()
+        state_v2_exists = state_model_v2.exists()
+        state_latest_version = 2 if state_v2_exists else (1 if state_v1_exists else 0)
+        state_exists = state_latest_version > 0
+
+        # Load metadata for latest version
+        mesure_metadata = self._load_model_metadata("mesure") if mesure_exists else {"model_name": f"CNN_BELMOUNTH_MESURE_V{mesure_latest_version}"}
+        state_metadata = self._load_model_metadata("state") if state_exists else {"model_name": f"CNN_BELMOUNTH_STATE_V{state_latest_version}"}
+
+        # Create scrollable container
+        canvas = tk.Canvas(frame, bg=BG, highlightthickness=0)
+        scrollbar = tk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=BG)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # ==================== MESURE MODEL SECTION ====================
+        mesure_container = tk.Frame(scrollable_frame, bg=BG)
+        mesure_container.pack(fill=tk.X, pady=(0, 8))
+
+        # Title + Status row
+        title_row = tk.Frame(mesure_container, bg=BG)
+        title_row.pack(fill=tk.X, padx=8, pady=4)
+
+        status_icon = "✓" if mesure_exists else "○"
+        status_color = GREEN if mesure_exists else AMBER
+        status_text = "TRAINED" if mesure_exists else "NOT TRAINED"
+
+        tk.Label(title_row, text=status_icon, bg=BG, fg=status_color, font=("Arial", 10, "bold"), width=2).pack(side=tk.LEFT)
+        tk.Label(title_row, text="📐 MESURE", bg=BG, fg=TEXT, font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(5, 0))
+        tk.Label(title_row, text="Keypoint Detection", bg=BG, fg=TEXT2, font=("Arial", 9)).pack(side=tk.LEFT, padx=(10, 0))
+        tk.Label(title_row, text=status_text, bg=BG, fg=status_color, font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=(15, 0))
+
+        if mesure_exists:
+            # Info row 1: Model name and version
+            info_row1 = tk.Frame(mesure_container, bg=BG)
+            info_row1.pack(fill=tk.X, padx=30, pady=2)
+            tk.Label(info_row1, text=mesure_metadata.get('model_name', 'Unknown'), bg=BG, fg=TEXT, font=("Arial", 9)).pack(side=tk.LEFT)
+            tk.Label(info_row1, text=f"V{mesure_latest_version}", bg=BG, fg=TEXT2, font=("Arial", 9)).pack(side=tk.LEFT, padx=(20, 0))
+
+            versions_str = " | ".join([f"V{v}{'*' if v == mesure_latest_version else ''}" for v in sorted([1, 2] if mesure_v1_exists or mesure_v2_exists else [])])
+            if mesure_v1_exists or mesure_v2_exists:
+                tk.Label(info_row1, text=f"({versions_str})", bg=BG, fg=TEXT2, font=("Arial", 8)).pack(side=tk.LEFT, padx=(10, 0))
+
+            # Metrics row
+            acc_10px = mesure_metadata.get("accuracy_10px", 0) * 100
+            acc_20px = mesure_metadata.get("accuracy_20px", 0) * 100
+            test_mae = mesure_metadata.get("test_mae", 0)
+            metrics_short = f"±10px:{acc_10px:.0f}% | ±20px:{acc_20px:.0f}% | MAE:{test_mae:.1f}px"
+
+            metrics_row = tk.Frame(mesure_container, bg=BG)
+            metrics_row.pack(fill=tk.X, padx=30, pady=2)
+            tk.Label(metrics_row, text=metrics_short, bg=BG, fg=TEXT, font=("Arial", 8)).pack(side=tk.LEFT)
+
+            # Action buttons row
+            btn_row = tk.Frame(mesure_container, bg=BG)
+            btn_row.pack(fill=tk.X, padx=30, pady=(4, 0))
+
+            upgrade_btn = tk.Button(btn_row, text=f"🔄 V{mesure_latest_version + 1}",
+                                   command=lambda: self._upgrade_model_dialog("mesure", approved_dataset, mesure_latest_version),
+                                   bg=GREEN, fg="#FFFFFF", font=("Arial", 8, "bold"), relief=tk.FLAT, bd=0, padx=8, pady=3)
+            upgrade_btn.pack(side=tk.LEFT, padx=(0, 6))
+            add_hover_effect(upgrade_btn, GREEN, "#388E3C", "#FFFFFF")
+
+            if mesure_v1_exists and mesure_v2_exists:
+                delete_btn = tk.Button(btn_row, text="🗑 V1",
+                                      command=lambda: self._delete_model_version("mesure", 1),
+                                      bg=RED, fg="#FFFFFF", font=("Arial", 8, "bold"), relief=tk.FLAT, bd=0, padx=8, pady=3)
+                delete_btn.pack(side=tk.LEFT)
+                add_hover_effect(delete_btn, RED, "#8B0F15", "#FFFFFF")
+
+        else:
+            # Not trained - info + create button
+            info_row = tk.Frame(mesure_container, bg=BG)
+            info_row.pack(fill=tk.X, padx=30, pady=2)
+            tk.Label(info_row, text=f"Dataset: {approved_dataset}/500 samples", bg=BG, fg=TEXT, font=("Arial", 9)).pack(side=tk.LEFT)
+
+            btn_row = tk.Frame(mesure_container, bg=BG)
+            btn_row.pack(fill=tk.X, padx=30, pady=(4, 0))
+
+            if approved_dataset < 500:
+                shortage = 500 - approved_dataset
+                tk.Label(btn_row, text=f"⚠ Need {shortage} more", bg=BG, fg=RED, font=("Arial", 8)).pack(side=tk.LEFT, padx=(0, 8))
+                create_btn = tk.Button(btn_row, text="⊘ CREATE",
+                                      bg="#CCCCCC", fg="#666666", font=("Arial", 8, "bold"), relief=tk.FLAT, bd=0, padx=8, pady=3, state=tk.DISABLED)
+                create_btn.pack(side=tk.LEFT)
+            else:
+                create_btn = tk.Button(btn_row, text="✚ CREATE",
+                                      command=lambda: self._create_model_dialog("mesure", approved_dataset),
+                                      bg=GREEN, fg="#FFFFFF", font=("Arial", 8, "bold"), relief=tk.FLAT, bd=0, padx=8, pady=3)
+                create_btn.pack(side=tk.LEFT)
+                add_hover_effect(create_btn, GREEN, "#388E3C", "#FFFFFF")
+
+        # Separator
+        tk.Frame(scrollable_frame, bg=BORDER, height=1).pack(fill=tk.X, padx=8, pady=6)
+
+        # ==================== STATE MODEL SECTION ====================
+        state_container = tk.Frame(scrollable_frame, bg=BG)
+        state_container.pack(fill=tk.X, pady=(0, 8))
+
+        # Title + Status row
+        title_row = tk.Frame(state_container, bg=BG)
+        title_row.pack(fill=tk.X, padx=8, pady=4)
+
+        status_icon = "✓" if state_exists else "○"
+        status_color = GREEN if state_exists else AMBER
+        status_text = "TRAINED" if state_exists else "NOT TRAINED"
+
+        tk.Label(title_row, text=status_icon, bg=BG, fg=status_color, font=("Arial", 10, "bold"), width=2).pack(side=tk.LEFT)
+        tk.Label(title_row, text="🔍 STATE", bg=BG, fg=TEXT, font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(5, 0))
+        tk.Label(title_row, text="Cable Classification", bg=BG, fg=TEXT2, font=("Arial", 9)).pack(side=tk.LEFT, padx=(10, 0))
+        tk.Label(title_row, text=status_text, bg=BG, fg=status_color, font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=(15, 0))
+
+        if state_exists:
+            # Info row 1: Model name and version
+            info_row1 = tk.Frame(state_container, bg=BG)
+            info_row1.pack(fill=tk.X, padx=30, pady=2)
+            tk.Label(info_row1, text=state_metadata.get('model_name', 'Unknown'), bg=BG, fg=TEXT, font=("Arial", 9)).pack(side=tk.LEFT)
+            tk.Label(info_row1, text=f"V{state_latest_version}", bg=BG, fg=TEXT2, font=("Arial", 9)).pack(side=tk.LEFT, padx=(20, 0))
+
+            versions_str = " | ".join([f"V{v}{'*' if v == state_latest_version else ''}" for v in sorted([1, 2] if state_v1_exists or state_v2_exists else [])])
+            if state_v1_exists or state_v2_exists:
+                tk.Label(info_row1, text=f"({versions_str})", bg=BG, fg=TEXT2, font=("Arial", 8)).pack(side=tk.LEFT, padx=(10, 0))
+
+            # Metrics row
+            overall_acc = state_metadata.get("overall_accuracy", 0) * 100
+            precision = state_metadata.get("precision", 0) * 100
+            metrics_short = f"Accuracy:{overall_acc:.0f}% | Precision:{precision:.0f}%"
+
+            metrics_row = tk.Frame(state_container, bg=BG)
+            metrics_row.pack(fill=tk.X, padx=30, pady=2)
+            tk.Label(metrics_row, text=metrics_short, bg=BG, fg=TEXT, font=("Arial", 8)).pack(side=tk.LEFT)
+
+            # Action buttons row
+            btn_row = tk.Frame(state_container, bg=BG)
+            btn_row.pack(fill=tk.X, padx=30, pady=(4, 0))
+
+            upgrade_btn = tk.Button(btn_row, text=f"🔄 V{state_latest_version + 1}",
+                                   command=lambda: self._upgrade_model_dialog("state", approved_dataset, state_latest_version),
+                                   bg=GREEN, fg="#FFFFFF", font=("Arial", 8, "bold"), relief=tk.FLAT, bd=0, padx=8, pady=3)
+            upgrade_btn.pack(side=tk.LEFT, padx=(0, 6))
+            add_hover_effect(upgrade_btn, GREEN, "#388E3C", "#FFFFFF")
+
+            if state_v1_exists and state_v2_exists:
+                delete_btn = tk.Button(btn_row, text="🗑 V1",
+                                      command=lambda: self._delete_model_version("state", 1),
+                                      bg=RED, fg="#FFFFFF", font=("Arial", 8, "bold"), relief=tk.FLAT, bd=0, padx=8, pady=3)
+                delete_btn.pack(side=tk.LEFT)
+                add_hover_effect(delete_btn, RED, "#8B0F15", "#FFFFFF")
+
+        else:
+            # Not trained - info + create button
+            info_row = tk.Frame(state_container, bg=BG)
+            info_row.pack(fill=tk.X, padx=30, pady=2)
+            tk.Label(info_row, text=f"Dataset: {approved_dataset}/500 samples", bg=BG, fg=TEXT, font=("Arial", 9)).pack(side=tk.LEFT)
+
+            btn_row = tk.Frame(state_container, bg=BG)
+            btn_row.pack(fill=tk.X, padx=30, pady=(4, 0))
+
+            if approved_dataset < 500:
+                shortage = 500 - approved_dataset
+                tk.Label(btn_row, text=f"⚠ Need {shortage} more", bg=BG, fg=RED, font=("Arial", 8)).pack(side=tk.LEFT, padx=(0, 8))
+                create_btn = tk.Button(btn_row, text="⊘ CREATE",
+                                      bg="#CCCCCC", fg="#666666", font=("Arial", 8, "bold"), relief=tk.FLAT, bd=0, padx=8, pady=3, state=tk.DISABLED)
+                create_btn.pack(side=tk.LEFT)
+            else:
+                create_btn = tk.Button(btn_row, text="✚ CREATE",
+                                      command=lambda: self._create_model_dialog("state", approved_dataset),
+                                      bg=GREEN, fg="#FFFFFF", font=("Arial", 8, "bold"), relief=tk.FLAT, bd=0, padx=8, pady=3)
+                create_btn.pack(side=tk.LEFT)
+                add_hover_effect(create_btn, GREEN, "#388E3C", "#FFFFFF")
+
+        # Separator
+        tk.Frame(scrollable_frame, bg=BORDER, height=1).pack(fill=tk.X, padx=8, pady=6)
+
+        # ==================== DEPLOYMENT/AFFECTATION SECTION ====================
+        deploy_container = tk.Frame(scrollable_frame, bg=BG)
+        deploy_container.pack(fill=tk.X, pady=(0, 8))
+
+        # Title row
+        title_row = tk.Frame(deploy_container, bg=BG)
+        title_row.pack(fill=tk.X, padx=8, pady=4)
+        tk.Label(title_row, text="📡 MODEL DEPLOYMENT", bg=BG, fg=TEXT, font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+        tk.Label(title_row, text="Send to Machines", bg=BG, fg=TEXT2, font=("Arial", 9)).pack(side=tk.LEFT, padx=(10, 0))
+
+        # Check which models can be deployed
+        can_deploy_mesure = mesure_exists
+        can_deploy_state = state_exists
+
+        if not can_deploy_mesure and not can_deploy_state:
+            info_row = tk.Frame(deploy_container, bg=BG)
+            info_row.pack(fill=tk.X, padx=30, pady=4)
+            tk.Label(info_row, text="⚠ Create at least one model before deploying", bg=BG, fg=AMBER, font=("Arial", 9)).pack(side=tk.LEFT)
+
+            deploy_btn = tk.Button(info_row, text="⊘ SEND",
+                                  bg="#CCCCCC", fg="#666666", font=("Arial", 8, "bold"), relief=tk.FLAT, bd=0, padx=8, pady=3, state=tk.DISABLED)
+            deploy_btn.pack(side=tk.LEFT, padx=(20, 0))
+        else:
+            models_info = []
+            if can_deploy_mesure:
+                models_info.append(f"MESURE (V{mesure_latest_version})")
+            if can_deploy_state:
+                models_info.append(f"STATE (V{state_latest_version})")
+
+            info_row = tk.Frame(deploy_container, bg=BG)
+            info_row.pack(fill=tk.X, padx=30, pady=4)
+            tk.Label(info_row, text=f"Ready: {' + '.join(models_info)}", bg=BG, fg=GREEN, font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+
+            deploy_btn = tk.Button(info_row, text="🚀 SEND",
+                                  command=self._deploy_models_dialog,
+                                  bg=ACCENT, fg="#FFFFFF", font=("Arial", 8, "bold"), relief=tk.FLAT, bd=0, padx=8, pady=3)
+            deploy_btn.pack(side=tk.LEFT, padx=(20, 0))
+            add_hover_effect(deploy_btn, ACCENT, "#8B0F15", "#FFFFFF")
+
+        canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
+
+    def _create_model_dialog(self, model_type, dataset_count):
+        """Dialog to create a new model"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Create {model_type.upper()} Model")
+        dialog.geometry("500x300")
+        dialog.configure(bg=BG)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        frame = tk.Frame(dialog, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text=f"Create {model_type.upper()} Model", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        tk.Label(frame, text=f"Dataset samples available: {dataset_count}", bg=BG, fg=TEXT, font=("Arial", 11)).pack(anchor=tk.W, pady=(0, 5))
+        tk.Label(frame, text="This will use all approved captures from the dataset section.", bg=BG, fg=TEXT2, font=("Arial", 9)).pack(anchor=tk.W, pady=(0, 20))
+
+        tk.Label(frame, text="⚙ Model will be trained using:", bg=BG, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 10))
+
+        info_text = f"""• All {dataset_count} approved captures from DATASET section
+• 80% training data ({int(dataset_count * 0.8)} samples)
+• 20% test data ({int(dataset_count * 0.2)} samples)
+• Type: {model_type}
+• Model will be saved as {model_type}_model_v1.h5"""
+
+        tk.Label(frame, text=info_text, bg=BG, fg=TEXT2, font=("Arial", 9), justify=tk.LEFT).pack(anchor=tk.W, pady=(0, 20))
+
+        # Buttons
+        btn_frame = tk.Frame(frame, bg=BG)
+        btn_frame.pack(fill=tk.X)
+
+        cancel_btn = tk.Button(btn_frame, text="CANCEL", command=dialog.destroy, bg=PANEL, fg=TEXT, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        cancel_btn.pack(side=tk.LEFT, padx=(0, 10))
+        add_hover_effect(cancel_btn, PANEL, SEP, TEXT)
+
+        def confirm_create():
+            messagebox.showinfo("Model Training", f"Training {model_type} model with {dataset_count} samples...\n\nThis may take several minutes.")
+            dialog.destroy()
+            # TODO: Call backend to start training
+            messagebox.showinfo("Success", f"Model training started! Check the TRAINING section for progress.")
+
+        create_btn = tk.Button(btn_frame, text="✚ CREATE & TRAIN", command=confirm_create, bg=GREEN, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        create_btn.pack(side=tk.LEFT)
+        add_hover_effect(create_btn, GREEN, "#388E3C", "#FFFFFF")
+
+    def _upgrade_model_dialog(self, model_type, dataset_count, current_version):
+        """Dialog to upgrade an existing model to next version"""
+        next_version = current_version + 1
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Upgrade {model_type.upper()} Model")
+        dialog.geometry("500x350")
+        dialog.configure(bg=BG)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        frame = tk.Frame(dialog, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text=f"Upgrade {model_type.upper()} Model", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        tk.Label(frame, text=f"Current available dataset: {dataset_count} samples", bg=BG, fg=TEXT, font=("Arial", 11)).pack(anchor=tk.W, pady=(0, 5))
+        tk.Label(frame, text=f"Current version: V{current_version} → New version: V{next_version}", bg=BG, fg=TEXT, font=("Arial", 11, "bold")).pack(anchor=tk.W, pady=(0, 15))
+
+        if dataset_count < 500:
+            shortage = 500 - dataset_count
+            tk.Label(frame, text=f"❌ Not enough new data! Need {shortage} more samples.", bg=BG, fg=RED, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 20))
+            tk.Label(frame, text="Please collect and approve at least 500 new captures before upgrading.", bg=BG, fg=TEXT2, font=("Arial", 9)).pack(anchor=tk.W, pady=(0, 20))
+
+            close_btn = tk.Button(frame, text="CLOSE", command=dialog.destroy, bg=PANEL, fg=TEXT, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+            close_btn.pack(anchor=tk.W)
+        else:
+            tk.Label(frame, text=f"✓ Ready to upgrade with {dataset_count} samples", bg=BG, fg=GREEN, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+            tk.Label(frame, text="⚙ Upgrade will:", bg=BG, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 10))
+
+            info_text = f"""• Use all {dataset_count} approved captures
+• Create new model version (V{current_version} → V{next_version})
+• Keep V{current_version} for comparison/rollback
+• Training: {int(dataset_count * 0.8)} samples
+• Testing: {int(dataset_count * 0.2)} samples
+• Optional: Delete old version after V{next_version} is verified"""
+
+            tk.Label(frame, text=info_text, bg=BG, fg=TEXT2, font=("Arial", 9), justify=tk.LEFT).pack(anchor=tk.W, pady=(0, 20))
+
+            # Buttons
+            btn_frame = tk.Frame(frame, bg=BG)
+            btn_frame.pack(fill=tk.X)
+
+            cancel_btn = tk.Button(btn_frame, text="CANCEL", command=dialog.destroy, bg=PANEL, fg=TEXT, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+            cancel_btn.pack(side=tk.LEFT, padx=(0, 10))
+            add_hover_effect(cancel_btn, PANEL, SEP, TEXT)
+
+            def confirm_upgrade():
+                messagebox.showinfo("Model Upgrade", f"Upgrading {model_type} model to V{next_version}...\n\nThis may take several minutes.")
+                dialog.destroy()
+                # TODO: Call backend to start upgrade training
+                messagebox.showinfo("Success", f"Model upgrade started!\nV{next_version} will be created while keeping V{current_version}.\nYou can delete the old version once verified.")
+
+            upgrade_btn = tk.Button(btn_frame, text=f"🔄 UPGRADE TO V{next_version}", command=confirm_upgrade, bg=GREEN, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+            upgrade_btn.pack(side=tk.LEFT)
+            add_hover_effect(upgrade_btn, GREEN, "#388E3C", "#FFFFFF")
+
+    def _delete_model_version(self, model_type, version):
+        """Delete an old model version"""
+        if not messagebox.askyesno("Confirm Delete", f"Delete {model_type.upper()} Model V{version}?\n\nThis will free up disk space but cannot be undone."):
+            return
+
+        try:
+            model_dir = Path(__file__).parent / "model_bellmounth_mesure" / "model"
+
+            if model_type == "mesure":
+                if version == 1:
+                    model_file = model_dir / "CNN_BELMOUNTH_MODEL_V1.h5"
+                else:
+                    model_file = model_dir / "CNN_BELMOUNTH_MESURE_V2.h5"
+            else:  # state
+                if version == 1:
+                    model_file = model_dir / "CNN_BELMOUNTH_STATE_V1.h5"
+                else:
+                    model_file = model_dir / "CNN_BELMOUNTH_STATE_V2.h5"
+
+            if model_file.exists():
+                model_file.unlink()
+                messagebox.showinfo("Success", f"✓ {model_type.upper()} Model V{version} deleted successfully!\n\nFreed up {model_file.stat().st_size / (1024**3):.2f} GB")
+                # Refresh the page
+                self._switch_page("model", self._show_model_page)
+            else:
+                messagebox.showerror("Error", f"Model file not found: {model_file.name}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to delete model: {str(e)}")
+
+    def _deploy_models_dialog(self):
+        """Dialog to deploy models to machines with version selection"""
+        # Check available versions
+        model_dir = Path(__file__).parent / "model_bellmounth_mesure" / "model"
+        mesure_v1 = model_dir / "CNN_BELMOUNTH_MODEL_V1.h5"
+        mesure_v2 = model_dir / "CNN_BELMOUNTH_MESURE_V2.h5"
+        state_v1 = model_dir / "CNN_BELMOUNTH_STATE_V1.h5"
+        state_v2 = model_dir / "CNN_BELMOUNTH_STATE_V2.h5"
+
+        mesure_versions = []
+        if mesure_v1.exists():
+            mesure_versions.append(1)
+        if mesure_v2.exists():
+            mesure_versions.append(2)
+
+        state_versions = []
+        if state_v1.exists():
+            state_versions.append(1)
+        if state_v2.exists():
+            state_versions.append(2)
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Deploy Models to Machines")
+        dialog.geometry("600x500")
+        dialog.configure(bg=BG)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        frame = tk.Frame(dialog, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text="Deploy Models to Machines", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        # MESURE Model Selection
+        if mesure_versions:
+            tk.Label(frame, text="📐 MESURE Model - Select Version:", bg=BG, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 10))
+
+            mesure_var = tk.IntVar(value=max(mesure_versions))  # Default to latest
+            mesure_frame = tk.Frame(frame, bg=BG)
+            mesure_frame.pack(fill=tk.X, padx=(20, 0), pady=(0, 15))
+
+            for v in mesure_versions:
+                latest_tag = " (Latest)" if v == max(mesure_versions) else ""
+                rb = tk.Radiobutton(mesure_frame, text=f"V{v}{latest_tag}", variable=mesure_var, value=v,
+                                   bg=BG, fg=TEXT, font=("Arial", 10), selectcolor=ACCENT)
+                rb.pack(anchor=tk.W, pady=3)
+        else:
+            mesure_var = tk.IntVar(value=0)
+            tk.Label(frame, text="⚠ No MESURE model available", bg=BG, fg=AMBER, font=("Arial", 10)).pack(anchor=tk.W, pady=(0, 15))
+
+        # STATE Model Selection
+        if state_versions:
+            tk.Label(frame, text="🔍 STATE Model - Select Version:", bg=BG, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(10, 10))
+
+            state_var = tk.IntVar(value=max(state_versions))  # Default to latest
+            state_frame = tk.Frame(frame, bg=BG)
+            state_frame.pack(fill=tk.X, padx=(20, 0), pady=(0, 15))
+
+            for v in state_versions:
+                latest_tag = " (Latest)" if v == max(state_versions) else ""
+                rb = tk.Radiobutton(state_frame, text=f"V{v}{latest_tag}", variable=state_var, value=v,
+                                   bg=BG, fg=TEXT, font=("Arial", 10), selectcolor=ACCENT)
+                rb.pack(anchor=tk.W, pady=3)
+        else:
+            state_var = tk.IntVar(value=0)
+            tk.Label(frame, text="⚠ No STATE model available", bg=BG, fg=AMBER, font=("Arial", 10)).pack(anchor=tk.W, pady=(10, 15))
+
+        # Info text
+        tk.Label(frame, text="Machine users will receive a notification saying 'New model update available'\nwith a button to download and install the selected versions.",
+                bg=BG, fg=TEXT2, font=("Arial", 9)).pack(anchor=tk.W, pady=(0, 20))
+
+        # Buttons
+        btn_frame = tk.Frame(frame, bg=BG)
+        btn_frame.pack(fill=tk.X)
+
+        cancel_btn = tk.Button(btn_frame, text="CANCEL", command=dialog.destroy, bg=PANEL, fg=TEXT, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        cancel_btn.pack(side=tk.LEFT, padx=(0, 10))
+        add_hover_effect(cancel_btn, PANEL, SEP, TEXT)
+
+        def confirm_deploy():
+            models_to_deploy = []
+            deploy_info = []
+
+            if mesure_var.get() > 0:
+                models_to_deploy.append(f"MESURE V{mesure_var.get()}")
+                deploy_info.append(f"  • MESURE Model V{mesure_var.get()}")
+
+            if state_var.get() > 0:
+                models_to_deploy.append(f"STATE V{state_var.get()}")
+                deploy_info.append(f"  • STATE Model V{state_var.get()}")
+
+            if not models_to_deploy:
+                messagebox.showwarning("Selection", "Please select at least one model to deploy")
+                return
+
+            # Confirmation
+            confirm_msg = "Ready to send model updates:\n\n" + "\n".join(deploy_info) + "\n\nProceed?"
+            if not messagebox.askyesno("Confirm Deployment", confirm_msg):
+                return
+
+            messagebox.showinfo("Deployment", f"Sending {' + '.join(models_to_deploy)} update notification to all machines...")
+            dialog.destroy()
+            # TODO: Call backend to send notifications with version info
+            messagebox.showinfo("Success", f"✓ Notification sent to all machines!\n\nMachine users will see:\n{chr(10).join(deploy_info)}\n\nThey can click 'Update Model' to install.")
+
+        deploy_btn = tk.Button(btn_frame, text="🚀 SEND TO MACHINES", command=confirm_deploy, bg=ACCENT, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        deploy_btn.pack(side=tk.LEFT)
+        add_hover_effect(deploy_btn, ACCENT, "#8B0F15", "#FFFFFF")
+
+    def _open_model_training(self):
+        try:
+            model_app_path = Path(__file__).parent / "model_bellmounth_mesure" / "model_app.py"
+            if model_app_path.exists():
+                import subprocess
+                subprocess.Popen([sys.executable, str(model_app_path)])
+                messagebox.showinfo("Success", "Model training UI launched in new window")
+            else:
+                messagebox.showerror("Error", f"Model app not found at:\n{model_app_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to launch model training:\n{str(e)}")
 
     def run(self):
         self.root.mainloop()

@@ -2416,8 +2416,44 @@ class ModelSection(QWidget):
         self._log_lbl.setText(
             f"Done — Train: {results['train_count']}  Test: {results['test_count']}"
         )
+
+        # Save metadata for admin panel display
+        self._save_model_metadata(results)
+
         self._refresh_model_list()
         self.toast.show_message("Training complete! Model saved.")
+
+    def _save_model_metadata(self, results: dict):
+        """Save model training results to metadata.json for admin panel"""
+        try:
+            from datetime import datetime
+            metadata = {
+                "model_name": "CNN_BELMOUNTH_MODEL_V1",
+                "version": 1,
+                "last_trained": datetime.now().isoformat(),
+                "training_status": "trained",
+                "accuracy_10px": results.get("acc_10px", 0) / 100.0,
+                "accuracy_20px": results.get("acc_20px", 0) / 100.0,
+                "test_loss": results.get("test_loss", 0),
+                "test_mae": results.get("test_mae", 0),
+                "mean_pixel_error": results.get("mean_pixel_error", 0),
+                "epochs_trained": results.get("epochs", 0),
+                "training_samples": results.get("train_count", 0),
+                "test_samples": results.get("test_count", 0),
+                "model_size_mb": 1813.3,
+                "input_shape": [640, 480, 1],
+                "output_shape": [4],
+                "architecture": "CNN with 4 convolutional layers",
+                "preprocessing": "Adaptive Threshold (kernel=21, C=5)",
+                "optimizer": "Adam",
+                "loss_function": "Mean Squared Error (MSE)",
+                "metrics": ["Mean Absolute Error (MAE)"]
+            }
+
+            metadata_path = MODEL_DIR / "model_metadata.json"
+            metadata_path.write_text(json.dumps(metadata, indent=2))
+        except Exception as e:
+            print(f"Error saving metadata: {e}")
 
     def _on_training_error(self, msg: str):
         self._train_btn.setEnabled(True)

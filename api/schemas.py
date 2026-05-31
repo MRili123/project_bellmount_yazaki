@@ -15,6 +15,7 @@ class LoginResponse(BaseModel):
 
 class SwitchResponse(BaseModel):
     id: str
+    machine_id: str
     switch_name: str
     expected_diameter_mm: float
     tolerance_min: float
@@ -114,12 +115,19 @@ class MachineFullResponse(BaseModel):
     location: str
     firmware_version: str
     is_connected: bool
+    is_active: bool
     created_at: datetime
 
     class Config:
         from_attributes = True
 
+class MachineUpdate(BaseModel):
+    location: Optional[str] = None
+    firmware_version: Optional[str] = None
+    is_active: Optional[bool] = None
+
 class SwitchCreate(BaseModel):
+    machine_id: str
     switch_name: str
     expected_diameter_mm: float
     tolerance_min: float
@@ -138,11 +146,20 @@ class CaptureAdminResponse(BaseModel):
     machine_id: str
     switch_id: str
     annoteur_id: Optional[str]
+    image_original_path: str
+    image_thresholded_path: str
+    p1_x: int
+    p1_y: int
+    p2_x: int
+    p2_y: int
     measured_distance_mm: float
+    expected_diameter_mm: Optional[float] = None
+    zoom_level: Optional[float] = None
     capture_method: str
     measurement_status: str
     delta_mm: float
     annoteur_approved: bool
+    quality_score: Optional[float]
     created_at: datetime
 
     class Config:

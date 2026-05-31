@@ -449,6 +449,28 @@ class APIClient:
         except Exception as e:
             return {"ok": False, "error_type": "unknown", "error": str(e), "details": str(e)}
 
+    def admin_update_machine(self, machine_id: str, **kwargs) -> Dict[str, Any]:
+        """Update a machine (partial update - only non-None fields)."""
+        try:
+            data = {k: v for k, v in kwargs.items() if v is not None}
+            response = requests.put(
+                f"{self.api_url}/admin/machines/{machine_id}",
+                json=data,
+                headers={"Authorization": f"Bearer {self.access_token}"},
+                timeout=5
+            )
+            if response.status_code == 200:
+                return {"ok": True, "data": response.json()}
+            else:
+                error_type = classify_error(None, response)
+                return {"ok": False, "error_type": error_type, "error": response.json().get("detail", "Machine update failed"), "details": response.text}
+        except requests.ConnectionError as e:
+            return {"ok": False, "error_type": "server_down", "error": "Cannot connect to server", "details": str(e)}
+        except requests.Timeout:
+            return {"ok": False, "error_type": "server_down", "error": "Connection timeout", "details": "Server took too long to respond"}
+        except Exception as e:
+            return {"ok": False, "error_type": "unknown", "error": str(e), "details": str(e)}
+
     def admin_delete_machine(self, machine_id: str) -> Dict[str, Any]:
         """Delete a machine."""
         try:
@@ -572,6 +594,46 @@ class APIClient:
             else:
                 error_type = classify_error(None, response)
                 return {"ok": False, "error_type": error_type, "error": response.json().get("detail", "Assign failed"), "details": response.text}
+        except requests.ConnectionError as e:
+            return {"ok": False, "error_type": "server_down", "error": "Cannot connect to server", "details": str(e)}
+        except requests.Timeout:
+            return {"ok": False, "error_type": "server_down", "error": "Connection timeout", "details": "Server took too long to respond"}
+        except Exception as e:
+            return {"ok": False, "error_type": "unknown", "error": str(e), "details": str(e)}
+
+    def admin_approve_capture(self, capture_id: str) -> Dict[str, Any]:
+        """Approve a capture."""
+        try:
+            response = requests.put(
+                f"{self.api_url}/admin/captures/{capture_id}/approve",
+                headers={"Authorization": f"Bearer {self.access_token}"},
+                timeout=5
+            )
+            if response.status_code == 200:
+                return {"ok": True, "data": response.json()}
+            else:
+                error_type = classify_error(None, response)
+                return {"ok": False, "error_type": error_type, "error": response.json().get("detail", "Approve failed"), "details": response.text}
+        except requests.ConnectionError as e:
+            return {"ok": False, "error_type": "server_down", "error": "Cannot connect to server", "details": str(e)}
+        except requests.Timeout:
+            return {"ok": False, "error_type": "server_down", "error": "Connection timeout", "details": "Server took too long to respond"}
+        except Exception as e:
+            return {"ok": False, "error_type": "unknown", "error": str(e), "details": str(e)}
+
+    def get_notifications(self) -> Dict[str, Any]:
+        """Get all notifications for current user."""
+        try:
+            response = requests.get(
+                f"{self.api_url}/notifications/",
+                headers={"Authorization": f"Bearer {self.access_token}"},
+                timeout=5
+            )
+            if response.status_code == 200:
+                return {"ok": True, "data": response.json()}
+            else:
+                error_type = classify_error(None, response)
+                return {"ok": False, "error_type": error_type, "error": response.json().get("detail", "Failed to fetch notifications"), "details": response.text}
         except requests.ConnectionError as e:
             return {"ok": False, "error_type": "server_down", "error": "Cannot connect to server", "details": str(e)}
         except requests.Timeout:
