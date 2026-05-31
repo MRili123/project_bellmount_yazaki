@@ -20,7 +20,8 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
             token_type="bearer",
             role=user.role,
             user_id=user.id,
-            username=user.username
+            username=user.username,
+            machine_id=user.machine_id
         )
 
     # Try to find as machine user
@@ -33,7 +34,8 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
             token_type="bearer",
             role="machine_user",
             user_id=machine.id,
-            username=machine.machine_name
+            username=machine.machine_name,
+            machine_id=machine.id
         )
 
     raise HTTPException(

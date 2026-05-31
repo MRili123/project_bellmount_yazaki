@@ -12,6 +12,7 @@ class LoginResponse(BaseModel):
     role: str
     user_id: str
     username: str
+    machine_id: Optional[str] = None
 
 class SwitchResponse(BaseModel):
     id: str

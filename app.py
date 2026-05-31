@@ -476,13 +476,14 @@ def add_hover_effect(button, normal_color, hover_color, text_color=TEXT):
 
 # ==================== MAIN APP ====================
 class MainApp:
-    def __init__(self, machine_name, api_client: APIClient = None):
+    def __init__(self, machine_name, api_client: APIClient = None, machine_id: str = None):
         self.root = tk.Tk()
         self.root.title(f"Bellmounth Inspection — {machine_name}")
         self.root.geometry("1440x900")
         self.root.configure(bg=BG)
         self.root.state('zoomed')
         self.machine_name = machine_name
+        self.machine_id = machine_id
         self.api_client = api_client
         self.selected_switch = None
 
@@ -583,9 +584,9 @@ class MainApp:
         self.root.destroy()
 
     def _fetch_switches(self):
-        """Fetch available switches from API"""
+        """Fetch switches for this machine from API"""
         if self.api_client:
-            result = self.api_client.get_switches()
+            result = self.api_client.get_switches(machine_id=self.machine_id)
             if result.get("ok"):
                 return result.get("data", [])
             else:
@@ -3798,10 +3799,11 @@ if __name__ == "__main__":
         role = login_result.get("role")
         username = login_result.get("username")
         user_id = login_result.get("user_id")
+        machine_id = login_result.get("machine_id")
 
         # Route to appropriate UI based on role
         if role == "machine_user":
-            app = MainApp(username, api_client)
+            app = MainApp(username, api_client, machine_id=machine_id)
             app.run()
         elif role == "annoteur":
             print(f"Annoteur UI not yet implemented. Logged in as {username}")

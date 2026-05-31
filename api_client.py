@@ -124,11 +124,16 @@ class APIClient:
                 "details": str(e)
             }
 
-    def get_switches(self) -> Dict[str, Any]:
-        """Get list of all switches. Returns {"ok": bool, "data": list} or error dict."""
+    def get_switches(self, machine_id: str = None) -> Dict[str, Any]:
+        """Get list of switches. Optionally filter by machine_id. Returns {"ok": bool, "data": list} or error dict."""
         try:
+            url = f"{self.api_url}/admin/switches"
+            params = {}
+            if machine_id:
+                params["machine_id"] = machine_id
             response = requests.get(
-                f"{self.api_url}/switches/",
+                url,
+                params=params,
                 headers={"Authorization": f"Bearer {self.access_token}"},
                 timeout=5
             )
@@ -491,10 +496,41 @@ class APIClient:
         except Exception as e:
             return {"ok": False, "error_type": "unknown", "error": str(e), "details": str(e)}
 
-    def admin_create_switch(self, switch_name: str, expected_diameter_mm: float, tolerance_min: float, tolerance_max: float, cable_type: str) -> Dict[str, Any]:
-        """Create a new switch."""
+    def admin_get_switches(self, machine_id: str = None) -> Dict[str, Any]:
+        """Get all switches, optionally filtered by machine_id."""
         try:
-            data = {"switch_name": switch_name, "expected_diameter_mm": expected_diameter_mm, "tolerance_min": tolerance_min, "tolerance_max": tolerance_max, "cable_type": cable_type}
+            params = {}
+            if machine_id:
+                params["machine_id"] = machine_id
+            response = requests.get(
+                f"{self.api_url}/admin/switches",
+                params=params,
+                headers={"Authorization": f"Bearer {self.access_token}"},
+                timeout=5
+            )
+            if response.status_code == 200:
+                return {"ok": True, "data": response.json()}
+            else:
+                error_type = classify_error(None, response)
+                return {"ok": False, "error_type": error_type, "error": f"Failed to fetch switches", "details": response.text}
+        except requests.ConnectionError as e:
+            return {"ok": False, "error_type": "server_down", "error": "Cannot connect to server", "details": str(e)}
+        except requests.Timeout:
+            return {"ok": False, "error_type": "server_down", "error": "Connection timeout", "details": "Server took too long to respond"}
+        except Exception as e:
+            return {"ok": False, "error_type": "unknown", "error": str(e), "details": str(e)}
+
+    def admin_create_switch(self, machine_id: str, switch_name: str, expected_diameter_mm: float, tolerance_min: float, tolerance_max: float, cable_type: str) -> Dict[str, Any]:
+        """Create a new switch for a specific machine."""
+        try:
+            data = {
+                "machine_id": machine_id,
+                "switch_name": switch_name,
+                "expected_diameter_mm": expected_diameter_mm,
+                "tolerance_min": tolerance_min,
+                "tolerance_max": tolerance_max,
+                "cable_type": cable_type
+            }
             response = requests.post(
                 f"{self.api_url}/admin/switches",
                 json=data,
