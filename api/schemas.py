@@ -129,12 +129,12 @@ class MachineUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 class SwitchCreate(BaseModel):
-    machine_id: str
-    switch_name: str
-    expected_diameter_mm: float
-    tolerance_min: float
-    tolerance_max: float
-    cable_type: str
+    machine_id: str  # Required: Every switch must belong to a machine
+    switch_name: str  # Required
+    expected_diameter_mm: float  # Required
+    tolerance_min: float  # Required
+    tolerance_max: float  # Required
+    cable_type: str  # Required
 
 class SwitchUpdate(BaseModel):
     switch_name: Optional[str] = None

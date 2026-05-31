@@ -67,12 +67,12 @@ class Switch(Base):
     __tablename__ = "switches"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    machine_id = Column(String, ForeignKey("machines.id"))
-    switch_name = Column(String)
-    expected_diameter_mm = Column(Float)
-    tolerance_min = Column(Float)
-    tolerance_max = Column(Float)
-    cable_type = Column(String)
+    machine_id = Column(String, ForeignKey("machines.id"), nullable=False)
+    switch_name = Column(String, nullable=False)
+    expected_diameter_mm = Column(Float, nullable=False)
+    tolerance_min = Column(Float, nullable=False)
+    tolerance_max = Column(Float, nullable=False)
+    cable_type = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
