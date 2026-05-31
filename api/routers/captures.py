@@ -5,7 +5,7 @@ from datetime import datetime
 import os
 import uuid
 from database import get_db
-from models import Capture, User
+from models import Capture, User, Switch
 from schemas import CaptureResponse, CaptureUploadRequest
 
 router = APIRouter(prefix="/captures", tags=["captures"])
@@ -32,6 +32,13 @@ def upload_capture(
     db: Session = Depends(get_db)
 ):
     try:
+        # Validate that switch belongs to this machine
+        switch = db.query(Switch).filter(Switch.id == switch_id).first()
+        if not switch:
+            raise HTTPException(status_code=404, detail="Switch not found")
+        if switch.machine_id != machine_id:
+            raise HTTPException(status_code=400, detail="Switch does not belong to this machine")
+
         # Generate unique filenames
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         unique_id = str(uuid.uuid4())[:8]
