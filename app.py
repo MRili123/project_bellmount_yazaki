@@ -3917,13 +3917,16 @@ class AnnoteurInteractiveApp:
         self.edited_p1 = None
         self.edited_p2 = None
         self.dragging_point = None  # "p1", "p2", or None
-        self.cable_state = tk.StringVar()
 
+        # Create root window FIRST
         self.root = tk.Tk()
         self.root.title("Cable Annotation Studio")
         self.root.geometry("1400x900")
         self.root.configure(bg=BG)
         self.root.state('zoomed')
+
+        # NOW create StringVar after root exists
+        self.cable_state = tk.StringVar()
 
         self._build_ui()
         self._load_captures()
