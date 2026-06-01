@@ -2,31 +2,31 @@
   "users": {
     "data": [
       {
-        "id": "987cc1b2-2c3b-43e1-8083-8ab1ff5b20bf",
+        "id": "e327d846-f1b8-4fcd-b54a-1f563d328890",
         "username": "annoteur_01",
         "role": "annoteur",
         "email": "annoteur1@bellmounth.local",
         "is_active": true,
-        "created_at": "2026-05-31T19:20:14.534304"
+        "created_at": "2026-05-31T19:31:28.944938"
       },
       {
-        "id": "93964dbe-f578-4bcc-a05b-52877d7f8620",
+        "id": "b46b8882-fc67-4441-868b-665c4815592b",
         "username": "annoteur_02",
         "role": "annoteur",
         "email": "annoteur2@bellmounth.local",
         "is_active": true,
-        "created_at": "2026-05-31T19:20:14.534304"
+        "created_at": "2026-05-31T19:31:28.944938"
       },
       {
-        "id": "4c4a21cd-d29c-4bae-beff-2dab9e00f6a3",
+        "id": "5b93ffad-4fa8-4329-b86c-56a87a762ceb",
         "username": "admin",
         "role": "admin",
         "email": "admin@bellmounth.local",
         "is_active": true,
-        "created_at": "2026-05-31T19:20:14.749061"
+        "created_at": "2026-05-31T19:31:29.170175"
       }
     ],
-    "updated_at": "2026-05-31T20:27:22.115506"
+    "updated_at": "2026-05-31T20:34:09.267687"
   },
   "machines": {
     "data": [
@@ -54,37 +54,40 @@
   "switches": {
     "data": [
       {
-        "id": "019b5040-6cc4-4680-9bcf-853ca1e0914c",
-        "machine_id": "5ec5b4cb-3cc6-41e9-a485-a250137e8e97",
+        "id": "fc619508-2635-4d10-a5da-907628984440",
+        "machine_id": "f2114106-6ed2-4dc1-a88e-7ce3297d2910",
+        "machine_name": "LAB-01",
         "switch_name": "Standard Cable",
         "expected_diameter_mm": 10.5,
         "tolerance_min": 10.0,
         "tolerance_max": 11.0,
         "cable_type": "Standard",
-        "created_at": "2026-05-31T19:20:14.759068"
+        "created_at": "2026-05-31T19:31:29.176908"
       },
       {
-        "id": "58029955-d6fd-426f-b127-6a723c7a58b6",
-        "machine_id": "5ec5b4cb-3cc6-41e9-a485-a250137e8e97",
+        "id": "19af83bd-319c-4a4e-bc9c-1cdbe9e653aa",
+        "machine_id": "f2114106-6ed2-4dc1-a88e-7ce3297d2910",
+        "machine_name": "LAB-01",
         "switch_name": "Reinforced Cable",
         "expected_diameter_mm": 12.0,
         "tolerance_min": 11.5,
         "tolerance_max": 12.5,
         "cable_type": "Reinforced",
-        "created_at": "2026-05-31T19:20:14.759068"
+        "created_at": "2026-05-31T19:31:29.176908"
       },
       {
-        "id": "47dad47f-6ce3-495e-8295-b76cc96868ab",
-        "machine_id": "42a328a7-42d7-4103-9bd2-d9f26e0d2a50",
+        "id": "04e67c01-c10f-4280-bade-6ee584cfe584",
+        "machine_id": "0bba3931-3a9c-4e26-8ac2-a0d96fb389bd",
+        "machine_name": "LAB-02",
         "switch_name": "Coaxial Cable",
         "expected_diameter_mm": 15.0,
         "tolerance_min": 14.5,
         "tolerance_max": 15.5,
         "cable_type": "Coaxial",
-        "created_at": "2026-05-31T19:20:14.759068"
+        "created_at": "2026-05-31T19:31:29.176908"
       }
     ],
-    "updated_at": "2026-05-31T20:27:26.780972"
+    "updated_at": "2026-05-31T20:34:15.332714"
   },
   "captures": {
     "data": [

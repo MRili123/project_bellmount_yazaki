@@ -676,3 +676,39 @@ class APIClient:
             return {"ok": False, "error_type": "server_down", "error": "Connection timeout", "details": "Server took too long to respond"}
         except Exception as e:
             return {"ok": False, "error_type": "unknown", "error": str(e), "details": str(e)}
+
+    # ==================== GENERIC HTTP METHODS ====================
+
+    def get(self, path: str, params: Dict = None) -> Any:
+        """Generic GET request."""
+        try:
+            url = f"{self.api_url}{path}" if path.startswith('/') else f"{self.api_url}/{path}"
+            response = requests.get(
+                url,
+                params=params,
+                headers={"Authorization": f"Bearer {self.access_token}"},
+                timeout=5
+            )
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            print(f"GET error: {e}")
+            return None
+
+    def put(self, path: str, data: Dict) -> Any:
+        """Generic PUT request."""
+        try:
+            url = f"{self.api_url}{path}" if path.startswith('/') else f"{self.api_url}/{path}"
+            response = requests.put(
+                url,
+                json=data,
+                headers={"Authorization": f"Bearer {self.access_token}"},
+                timeout=5
+            )
+            if response.status_code in [200, 201]:
+                return response.json()
+            return None
+        except Exception as e:
+            print(f"PUT error: {e}")
+            return None
