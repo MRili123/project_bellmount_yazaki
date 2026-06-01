@@ -3736,13 +3736,65 @@ class AnnoteurApp:
         image_path = capture.get("image_original_path", "")
         if image_path and Path(image_path).exists():
             try:
-                img = Image.open(image_path)
-                img.thumbnail((700, 600), Image.Resampling.LANCZOS)
-                photo = ImageTk.PhotoImage(img)
-                img_lbl = tk.Label(image_frame, image=photo, bg=BORDER)
-                img_lbl.image = photo
-                img_lbl.pack(fill=tk.BOTH, expand=True)
-            except:
+                import cv2
+
+                # Load image with OpenCV
+                img_cv = cv2.imread(image_path)
+                if img_cv is not None:
+                    # Get original dimensions
+                    orig_h, orig_w = img_cv.shape[:2]
+
+                    # Get keypoints
+                    p1_x = capture.get('p1_x', 0)
+                    p1_y = capture.get('p1_y', 0)
+                    p2_x = capture.get('p2_x', 0)
+                    p2_y = capture.get('p2_y', 0)
+
+                    # Draw circles at keypoints (green)
+                    cv2.circle(img_cv, (int(p1_x), int(p1_y)), 8, (0, 255, 0), -1)  # Filled green circle
+                    cv2.circle(img_cv, (int(p2_x), int(p2_y)), 8, (0, 255, 0), -1)
+
+                    # Draw line connecting keypoints (yellow)
+                    cv2.line(img_cv, (int(p1_x), int(p1_y)), (int(p2_x), int(p2_y)), (0, 255, 255), 2)
+
+                    # Calculate pixel distance
+                    px_dist = ((p2_x - p1_x)**2 + (p2_y - p1_y)**2)**0.5
+
+                    # Add distance label (red text)
+                    mm_dist = capture.get('measured_distance_mm', 0)
+                    label = f"{mm_dist:.2f} mm ({px_dist:.0f} px)"
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    font_scale = 0.6
+                    thickness = 2
+                    color = (0, 0, 255)  # Red in BGR
+
+                    # Get text size to add background
+                    text_size = cv2.getTextSize(label, font, font_scale, thickness)[0]
+                    label_x = int((p1_x + p2_x) / 2) - text_size[0] // 2
+                    label_y = int((p1_y + p2_y) / 2) - 15
+
+                    # Add white background for text
+                    cv2.rectangle(img_cv,
+                                 (label_x - 5, label_y - text_size[1] - 5),
+                                 (label_x + text_size[0] + 5, label_y + 5),
+                                 (255, 255, 255), -1)
+
+                    # Add text
+                    cv2.putText(img_cv, label, (label_x, label_y), font, font_scale, color, thickness)
+
+                    # Convert to PIL and resize
+                    img_rgb = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
+                    img = Image.fromarray(img_rgb)
+                    img.thumbnail((700, 600), Image.Resampling.LANCZOS)
+
+                    photo = ImageTk.PhotoImage(img)
+                    img_lbl = tk.Label(image_frame, image=photo, bg=BORDER)
+                    img_lbl.image = photo
+                    img_lbl.pack(fill=tk.BOTH, expand=True)
+                else:
+                    tk.Label(image_frame, text="Failed to load image", bg=BORDER, fg=TEXT2).pack(fill=tk.BOTH, expand=True)
+            except Exception as e:
+                print(f"Image display error: {e}")
                 tk.Label(image_frame, text="Failed to load image", bg=BORDER, fg=TEXT2).pack(fill=tk.BOTH, expand=True)
         else:
             tk.Label(image_frame, text="No image available", bg=BORDER, fg=TEXT2, font=("Arial", 12)).pack(fill=tk.BOTH, expand=True)
@@ -3751,12 +3803,21 @@ class AnnoteurApp:
         info_frame = tk.Frame(left_panel, bg=PANEL)
         info_frame.pack(fill=tk.X, pady=10)
 
-        info_text = f"""
-        Machine: {capture.get('machine_id', 'N/A')}
-        Switch: {capture.get('switch_id', 'N/A')}
-        Measured: {capture.get('measured_distance_mm', 'N/A')} mm
-        Status: {capture.get('measurement_status', 'N/A')}
-        """
+        p1_x = capture.get('p1_x', 0)
+        p1_y = capture.get('p1_y', 0)
+        p2_x = capture.get('p2_x', 0)
+        p2_y = capture.get('p2_y', 0)
+        px_dist = ((p2_x - p1_x)**2 + (p2_y - p1_y)**2)**0.5
+
+        info_text = f"""Machine: {capture.get('machine_id', 'N/A')[:8]}...
+Switch: {capture.get('switch_id', 'N/A')[:8]}...
+Measured: {capture.get('measured_distance_mm', 'N/A')} mm
+Status: {capture.get('measurement_status', 'N/A')}
+
+P1 (Start): ({int(p1_x)}, {int(p1_y)})
+P2 (End):   ({int(p2_x)}, {int(p2_y)})
+Distance:   {px_dist:.1f} pixels"""
+
         tk.Label(info_frame, text=info_text, bg=PANEL, fg=TEXT2, font=("Consolas", 9), justify=tk.LEFT).pack(anchor=tk.W, padx=10, pady=10)
 
         # Right panel: approval controls
