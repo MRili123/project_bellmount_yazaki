@@ -3607,7 +3607,7 @@ class AdminApp:
     def run(self):
         self.root.mainloop()
 
-# ==================== ANNOTEUR APP ====================
+# ==================== ANNOTEUR APP (Interactive Point Editing) ====================
 class AnnoteurApp:
     def __init__(self, username: str, user_id: str, api_client: APIClient):
         self.username = username
@@ -3899,6 +3899,288 @@ Quality: {capture.get('quality_score', 'N/A')}"""
     def run(self):
         self.root.mainloop()
 
+
+# ==================== ANNOTEUR APP (Interactive Point Editing) ====================
+class AnnoteurInteractiveApp:
+    """Interactive annotation interface where annoteurs can edit keypoints and label cable state"""
+
+    def __init__(self, username: str, user_id: str, api_client: APIClient):
+        self.username = username
+        self.user_id = user_id
+        self.api_client = api_client
+        self.captures = []
+        self.current_idx = 0
+        self.current_image_pil = None
+        self.current_photo = None
+
+        # Editing state
+        self.edited_p1 = None
+        self.edited_p2 = None
+        self.dragging_point = None  # "p1", "p2", or None
+        self.cable_state = tk.StringVar()
+
+        self.root = tk.Tk()
+        self.root.title("Cable Annotation Studio")
+        self.root.geometry("1400x900")
+        self.root.configure(bg=BG)
+        self.root.state('zoomed')
+
+        self._build_ui()
+        self._load_captures()
+
+    def _build_ui(self):
+        # Header
+        top = tk.Frame(self.root, bg=PANEL, height=58)
+        top.pack(fill=tk.X, side=tk.TOP)
+        top.pack_propagate(False)
+
+        tk.Label(top, text="Cable Annotation Studio", bg=PANEL, fg=TEXT, font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=10)
+        tk.Frame(top, bg=PANEL).pack(fill=tk.X, expand=True)
+        tk.Label(top, text=self.username, bg=PANEL, fg=TEXT, font=("Arial", 10)).pack(side=tk.LEFT, padx=10)
+
+        quit_btn = tk.Button(top, text="LOGOUT", command=self._on_closing, bg=RED, fg="#FFFFFF", font=("Arial", 9, "bold"), relief=tk.FLAT, bd=0, padx=12, pady=4)
+        quit_btn.pack(side=tk.LEFT, padx=10)
+        add_hover_effect(quit_btn, RED, RED, "#FFFFFF")
+
+        # Main content
+        main = tk.Frame(self.root, bg=BG)
+        main.pack(fill=tk.BOTH, expand=True)
+
+        # Left: Image editor (canvas for interactive editing)
+        left = tk.Frame(main, bg=BG)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        tk.Label(left, text="Click & Drag to Edit Points", bg=BG, fg=TEXT2, font=("Arial", 10)).pack(anchor=tk.W)
+
+        self.canvas = tk.Canvas(left, bg=BORDER, width=700, height=700, cursor="crosshair")
+        self.canvas.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
+        self.canvas.bind("<Button-1>", self._on_canvas_press)
+        self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
+        self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
+
+        # Right: Annotation panel
+        right = tk.Frame(main, bg=PANEL, width=400)
+        right.pack(side=tk.RIGHT, fill=tk.BOTH, padx=10, pady=10)
+        right.pack_propagate(False)
+
+        # Status and navigation
+        tk.Label(right, text="ANNOTATION PANEL", bg=PANEL, fg=TEXT, font=("Arial", 11, "bold")).pack(anchor=tk.W, padx=15, pady=(15, 10))
+
+        self.status_lbl = tk.Label(right, text="Capture 0/0", bg=PANEL, fg=TEXT2, font=("Arial", 9))
+        self.status_lbl.pack(anchor=tk.W, padx=15)
+
+        tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X, pady=10, padx=15)
+
+        # Original vs Edited comparison
+        tk.Label(right, text="ORIGINAL POINTS", bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 5))
+        self.orig_lbl = tk.Label(right, text="P1: (0, 0)\nP2: (0, 0)\nDistance: 0 px → 0 mm", bg=PANEL, fg=TEXT2, font=("Consolas", 8), justify=tk.LEFT)
+        self.orig_lbl.pack(anchor=tk.W, padx=20, pady=(0, 10))
+
+        tk.Label(right, text="EDITED POINTS", bg=PANEL, fg=ACCENT, font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 5))
+        self.edit_lbl = tk.Label(right, text="P1: (0, 0)\nP2: (0, 0)\nDistance: 0 px → 0 mm", bg=PANEL, fg=ACCENT, font=("Consolas", 8), justify=tk.LEFT)
+        self.edit_lbl.pack(anchor=tk.W, padx=20, pady=(0, 10))
+
+        tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X, pady=10, padx=15)
+
+        # Cable state
+        tk.Label(right, text="CABLE STATE", bg=PANEL, fg=TEXT, font=("Arial", 11, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 10))
+
+        states = [("🔴 No Cable", "no_cable"), ("🟠 Male End", "cable_male"), ("🟢 Good Cable", "cable_good")]
+        for label, value in states:
+            tk.Radiobutton(right, text=label, variable=self.cable_state, value=value,
+                          bg=PANEL, fg=TEXT, font=("Arial", 10),
+                          selectcolor=ACCENT, activebackground=PANEL, activeforeground=ACCENT).pack(anchor=tk.W, padx=25, pady=3)
+
+        tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X, pady=10, padx=15)
+
+        # Action buttons
+        button_frame = tk.Frame(right, bg=PANEL)
+        button_frame.pack(fill=tk.X, padx=15, pady=(10, 15))
+
+        def on_save():
+            if not self.cable_state.get():
+                messagebox.showwarning("Validation", "Please select cable state")
+                return
+            if self.edited_p1 is None or self.edited_p2 is None:
+                messagebox.showwarning("Validation", "Please set both P1 and P2 points")
+                return
+            self._save_annotation()
+
+        save_btn = tk.Button(button_frame, text="✓ SAVE & NEXT", command=on_save,
+                            bg=GREEN, fg="#FFFFFF", font=("Arial", 10, "bold"),
+                            relief=tk.FLAT, bd=0, padx=15, pady=10)
+        save_btn.pack(fill=tk.X, pady=(0, 8))
+        add_hover_effect(save_btn, GREEN, GREEN, "#FFFFFF")
+
+        skip_btn = tk.Button(button_frame, text="⊘ SKIP", command=self._next_capture,
+                            bg=AMBER, fg="#FFFFFF", font=("Arial", 10, "bold"),
+                            relief=tk.FLAT, bd=0, padx=15, pady=10)
+        skip_btn.pack(fill=tk.X)
+        add_hover_effect(skip_btn, AMBER, AMBER, "#FFFFFF")
+
+        # Navigation
+        nav_frame = tk.Frame(right, bg=PANEL)
+        nav_frame.pack(fill=tk.X, padx=15, pady=(10, 15))
+
+        tk.Button(nav_frame, text="◀ PREV", command=self._prev_capture,
+                 bg=TEXT2, fg="#FFFFFF", font=("Arial", 9, "bold"),
+                 relief=tk.FLAT, bd=0, padx=10, pady=6, width=10).pack(side=tk.LEFT, padx=(0, 5))
+
+        tk.Frame(nav_frame, bg=PANEL).pack(fill=tk.X, expand=True)
+
+        tk.Button(nav_frame, text="NEXT ▶", command=self._next_capture,
+                 bg=TEXT2, fg="#FFFFFF", font=("Arial", 9, "bold"),
+                 relief=tk.FLAT, bd=0, padx=10, pady=6, width=10).pack(side=tk.RIGHT)
+
+    def _load_captures(self):
+        try:
+            response = self.api_client.get("/admin/captures?status=pending")
+            self.captures = response if isinstance(response, list) else []
+            self.current_idx = 0
+            self._show_capture()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load captures: {str(e)}")
+            self.captures = []
+
+    def _show_capture(self):
+        if not self.captures:
+            self.canvas.delete("all")
+            self.canvas.create_text(350, 350, text="All captures reviewed!", font=("Arial", 16), fill=TEXT2)
+            return
+
+        capture = self.captures[self.current_idx]
+
+        # Load image
+        image_path = capture.get('image_original_path', '')
+        if image_path and Path(image_path).exists():
+            self.current_image_pil = Image.open(image_path)
+            self.current_image_pil.thumbnail((700, 700), Image.Resampling.LANCZOS)
+            self.current_photo = ImageTk.PhotoImage(self.current_image_pil)
+
+            self.canvas.delete("all")
+            self.canvas.create_image(0, 0, image=self.current_photo, anchor=tk.NW)
+
+            # Initialize edited points from capture data
+            self.edited_p1 = (capture.get('p1_x', 0), capture.get('p1_y', 0))
+            self.edited_p2 = (capture.get('p2_x', 0), capture.get('p2_y', 0))
+
+            self._draw_points()
+            self._update_display()
+            self.status_lbl.config(text=f"Capture {self.current_idx + 1}/{len(self.captures)}")
+
+    def _draw_points(self):
+        """Draw P1, P2 circles and line on canvas"""
+        if self.edited_p1 and self.edited_p2:
+            p1_x, p1_y = self.edited_p1
+            p2_x, p2_y = self.edited_p2
+
+            # Draw circles (green)
+            r = 8
+            self.canvas.create_oval(p1_x-r, p1_y-r, p1_x+r, p1_y+r, fill=GREEN, outline=GREEN, width=2)
+            self.canvas.create_oval(p2_x-r, p2_y-r, p2_x+r, p2_y+r, fill=GREEN, outline=GREEN, width=2)
+
+            # Draw line (yellow)
+            self.canvas.create_line(p1_x, p1_y, p2_x, p2_y, fill=AMBER, width=2)
+
+            # Draw labels
+            self.canvas.create_text(p1_x-15, p1_y-15, text="P1", fill=GREEN, font=("Arial", 10, "bold"))
+            self.canvas.create_text(p2_x+15, p2_y+15, text="P2", fill=GREEN, font=("Arial", 10, "bold"))
+
+    def _update_display(self):
+        """Update the info labels"""
+        if not self.captures:
+            return
+
+        capture = self.captures[self.current_idx]
+        orig_p1 = (capture.get('p1_x', 0), capture.get('p1_y', 0))
+        orig_p2 = (capture.get('p2_x', 0), capture.get('p2_y', 0))
+        orig_dist = ((orig_p2[0]-orig_p1[0])**2 + (orig_p2[1]-orig_p1[1])**2)**0.5
+        measured_mm = capture.get('measured_distance_mm', 0)
+
+        self.orig_lbl.config(text=f"P1: {orig_p1}\nP2: {orig_p2}\nDistance: {orig_dist:.0f} px → {measured_mm} mm")
+
+        if self.edited_p1 and self.edited_p2:
+            edit_dist = ((self.edited_p2[0]-self.edited_p1[0])**2 + (self.edited_p2[1]-self.edited_p1[1])**2)**0.5
+            self.edit_lbl.config(text=f"P1: {self.edited_p1}\nP2: {self.edited_p2}\nDistance: {edit_dist:.0f} px")
+
+    def _on_canvas_press(self, event):
+        """Detect if user clicked on P1 or P2"""
+        if not self.edited_p1 or not self.edited_p2:
+            return
+
+        p1_x, p1_y = self.edited_p1
+        p2_x, p2_y = self.edited_p2
+        dist_p1 = ((event.x - p1_x)**2 + (event.y - p1_y)**2)**0.5
+        dist_p2 = ((event.x - p2_x)**2 + (event.y - p2_y)**2)**0.5
+
+        if dist_p1 < 15:
+            self.dragging_point = "p1"
+        elif dist_p2 < 15:
+            self.dragging_point = "p2"
+
+    def _on_canvas_drag(self, event):
+        """Update point position while dragging"""
+        if self.dragging_point == "p1":
+            self.edited_p1 = (event.x, event.y)
+        elif self.dragging_point == "p2":
+            self.edited_p2 = (event.x, event.y)
+
+        self.canvas.delete("all")
+        if self.current_photo:
+            self.canvas.create_image(0, 0, image=self.current_photo, anchor=tk.NW)
+        self._draw_points()
+        self._update_display()
+
+    def _on_canvas_release(self, event):
+        """Stop dragging"""
+        self.dragging_point = None
+
+    def _save_annotation(self):
+        """Save edited points and cable state"""
+        if not self.captures or not self.edited_p1 or not self.edited_p2:
+            return
+
+        capture = self.captures[self.current_idx]
+
+        try:
+            # Update capture with edited points and approval
+            payload = {
+                "p1_x": int(self.edited_p1[0]),
+                "p1_y": int(self.edited_p1[1]),
+                "p2_x": int(self.edited_p2[0]),
+                "p2_y": int(self.edited_p2[1]),
+                "annoteur_approved": True
+            }
+
+            result = self.api_client.put(f"/admin/captures/{capture.get('id')}/annotate", payload)
+            if result:
+                messagebox.showinfo("Success", f"Annotation saved!\n{self.cable_state.get()}")
+                self._next_capture()
+            else:
+                messagebox.showerror("Error", "Failed to save annotation")
+        except Exception as e:
+            messagebox.showerror("Error", f"Save failed: {str(e)}")
+
+    def _next_capture(self):
+        """Move to next capture"""
+        if self.current_idx < len(self.captures) - 1:
+            self.current_idx += 1
+            self.cable_state.set("")
+            self._show_capture()
+
+    def _prev_capture(self):
+        """Move to previous capture"""
+        if self.current_idx > 0:
+            self.current_idx -= 1
+            self.cable_state.set("")
+            self._show_capture()
+
+    def _on_closing(self):
+        self.root.destroy()
+
+    def run(self):
+        self.root.mainloop()
+
 # ==================== MAIN ====================
 if __name__ == "__main__":
     # Check if API URL is configured
@@ -4027,7 +4309,7 @@ if __name__ == "__main__":
             app = MainApp(username, api_client, machine_id=machine_id)
             app.run()
         elif role == "annoteur":
-            app = AnnoteurApp(username, user_id, api_client)
+            app = AnnoteurInteractiveApp(username, user_id, api_client)
             app.run()
         elif role == "admin":
             app = AdminApp(username, user_id, api_client)

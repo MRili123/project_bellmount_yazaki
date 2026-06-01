@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from typing import List, Optional
+from pydantic import BaseModel
 import uuid
 from database import get_db
 from models import User, Machine, Switch, Capture, Notification, UserRole
@@ -274,6 +275,39 @@ def approve_capture(capture_id: str, db: Session = Depends(get_db)):
         raise HTTPException(404, "Capture not found")
 
     capture.annoteur_approved = True
+    db.commit()
+    db.refresh(capture)
+    return capture
+
+class CaptureAnnotateRequest(BaseModel):
+    p1_x: Optional[int] = None
+    p1_y: Optional[int] = None
+    p2_x: Optional[int] = None
+    p2_y: Optional[int] = None
+    cable_state: Optional[str] = None
+    annoteur_approved: Optional[bool] = None
+
+@router.put("/captures/{capture_id}/annotate", response_model=CaptureAdminResponse)
+def annotate_capture(capture_id: str, body: CaptureAnnotateRequest, db: Session = Depends(get_db)):
+    """Update capture with annoteur corrections and cable state label"""
+    capture = db.query(Capture).filter(Capture.id == capture_id).first()
+    if not capture:
+        raise HTTPException(404, "Capture not found")
+
+    # Update edited points
+    if body.p1_x is not None:
+        capture.p1_x = body.p1_x
+    if body.p1_y is not None:
+        capture.p1_y = body.p1_y
+    if body.p2_x is not None:
+        capture.p2_x = body.p2_x
+    if body.p2_y is not None:
+        capture.p2_y = body.p2_y
+
+    # Update approval status
+    if body.annoteur_approved is not None:
+        capture.annoteur_approved = body.annoteur_approved
+
     db.commit()
     db.refresh(capture)
     return capture
