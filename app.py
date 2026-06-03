@@ -3918,6 +3918,13 @@ class AnnoteurInteractiveApp:
         self.edited_p2 = None
         self.dragging_point = None  # "p1", "p2", or None
 
+        # Zoom state
+        self.zoom_level = 1.0
+        self.zoom_pan_x = 0
+        self.zoom_pan_y = 0
+        self.max_zoom = 5.0
+        self.min_zoom = 0.5
+
         # Create root window FIRST
         self.root = tk.Tk()
         self.root.title("Cable Annotation Studio")
@@ -3953,13 +3960,32 @@ class AnnoteurInteractiveApp:
         left = tk.Frame(main, bg=BG)
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        tk.Label(left, text="Click & Drag to Edit Points", bg=BG, fg=TEXT2, font=("Arial", 10)).pack(anchor=tk.W)
+        # Instructions and zoom controls
+        top_left = tk.Frame(left, bg=BG)
+        top_left.pack(fill=tk.X, pady=(0, 10))
+
+        tk.Label(top_left, text="Click & Drag to Edit Points | Scroll to Zoom", bg=BG, fg=TEXT2, font=("Arial", 10)).pack(side=tk.LEFT)
+
+        zoom_frame = tk.Frame(top_left, bg=BG)
+        zoom_frame.pack(side=tk.RIGHT)
+
+        tk.Button(zoom_frame, text="🔍−", command=self._zoom_out, bg=PANEL, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, bd=0, padx=8, pady=4).pack(side=tk.LEFT, padx=2)
+
+        self.zoom_lbl = tk.Label(zoom_frame, text="1.0x", bg=PANEL, fg=TEXT, font=("Arial", 9), width=6)
+        self.zoom_lbl.pack(side=tk.LEFT, padx=5)
+
+        tk.Button(zoom_frame, text="🔍+", command=self._zoom_in, bg=PANEL, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, bd=0, padx=8, pady=4).pack(side=tk.LEFT, padx=2)
+
+        tk.Button(zoom_frame, text="⟲ Reset", command=self._zoom_reset, bg=PANEL, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, bd=0, padx=8, pady=4).pack(side=tk.LEFT, padx=2)
 
         self.canvas = tk.Canvas(left, bg=BORDER, width=700, height=700, cursor="crosshair")
-        self.canvas.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
+        self.canvas.pack(fill=tk.BOTH, expand=True)
         self.canvas.bind("<Button-1>", self._on_canvas_press)
         self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
+        self.canvas.bind("<MouseWheel>", self._on_canvas_scroll)
+        self.canvas.bind("<Button-4>", self._on_canvas_scroll)  # Linux scroll up
+        self.canvas.bind("<Button-5>", self._on_canvas_scroll)  # Linux scroll down
 
         # Right: Annotation panel
         right = tk.Frame(main, bg=PANEL, width=400)
@@ -4053,6 +4079,12 @@ class AnnoteurInteractiveApp:
 
         capture = self.captures[self.current_idx]
 
+        # Reset zoom when loading new capture
+        self.zoom_level = 1.0
+        self.zoom_pan_x = 0
+        self.zoom_pan_y = 0
+        self._update_zoom_display()
+
         # Load image
         image_path = capture.get('image_original_path', '')
         if image_path and Path(image_path).exists():
@@ -4060,34 +4092,42 @@ class AnnoteurInteractiveApp:
             self.current_image_pil.thumbnail((700, 700), Image.Resampling.LANCZOS)
             self.current_photo = ImageTk.PhotoImage(self.current_image_pil)
 
-            self.canvas.delete("all")
-            self.canvas.create_image(0, 0, image=self.current_photo, anchor=tk.NW)
-
             # Initialize edited points from capture data
             self.edited_p1 = (capture.get('p1_x', 0), capture.get('p1_y', 0))
             self.edited_p2 = (capture.get('p2_x', 0), capture.get('p2_y', 0))
 
-            self._draw_points()
-            self._update_display()
+            self._redraw_canvas()
             self.status_lbl.config(text=f"Capture {self.current_idx + 1}/{len(self.captures)}")
 
+    def _apply_zoom(self, x, y):
+        """Apply zoom transformation to canvas coordinates"""
+        return (x * self.zoom_level + self.zoom_pan_x, y * self.zoom_level + self.zoom_pan_y)
+
+    def _reverse_zoom(self, x, y):
+        """Reverse zoom transformation from canvas to image coordinates"""
+        return ((x - self.zoom_pan_x) / self.zoom_level, (y - self.zoom_pan_y) / self.zoom_level)
+
     def _draw_points(self):
-        """Draw P1, P2 circles and line on canvas"""
+        """Draw P1, P2 circles and line on canvas with zoom"""
         if self.edited_p1 and self.edited_p2:
             p1_x, p1_y = self.edited_p1
             p2_x, p2_y = self.edited_p2
 
-            # Draw circles (green)
-            r = 8
-            self.canvas.create_oval(p1_x-r, p1_y-r, p1_x+r, p1_y+r, fill=GREEN, outline=GREEN, width=2)
-            self.canvas.create_oval(p2_x-r, p2_y-r, p2_x+r, p2_y+r, fill=GREEN, outline=GREEN, width=2)
+            # Apply zoom transformation
+            p1_x_z, p1_y_z = self._apply_zoom(p1_x, p1_y)
+            p2_x_z, p2_y_z = self._apply_zoom(p2_x, p2_y)
+
+            # Draw circles (green) - scale radius with zoom
+            r = max(5, int(8 * self.zoom_level))
+            self.canvas.create_oval(p1_x_z-r, p1_y_z-r, p1_x_z+r, p1_y_z+r, fill=GREEN, outline=GREEN, width=2)
+            self.canvas.create_oval(p2_x_z-r, p2_y_z-r, p2_x_z+r, p2_y_z+r, fill=GREEN, outline=GREEN, width=2)
 
             # Draw line (yellow)
-            self.canvas.create_line(p1_x, p1_y, p2_x, p2_y, fill=AMBER, width=2)
+            self.canvas.create_line(p1_x_z, p1_y_z, p2_x_z, p2_y_z, fill=AMBER, width=2)
 
             # Draw labels
-            self.canvas.create_text(p1_x-15, p1_y-15, text="P1", fill=GREEN, font=("Arial", 10, "bold"))
-            self.canvas.create_text(p2_x+15, p2_y+15, text="P2", fill=GREEN, font=("Arial", 10, "bold"))
+            self.canvas.create_text(p1_x_z-15, p1_y_z-15, text="P1", fill=GREEN, font=("Arial", 10, "bold"))
+            self.canvas.create_text(p2_x_z+15, p2_y_z+15, text="P2", fill=GREEN, font=("Arial", 10, "bold"))
 
     def _update_display(self):
         """Update the info labels"""
@@ -4107,36 +4147,85 @@ class AnnoteurInteractiveApp:
             self.edit_lbl.config(text=f"P1: {self.edited_p1}\nP2: {self.edited_p2}\nDistance: {edit_dist:.0f} px")
 
     def _on_canvas_press(self, event):
-        """Detect if user clicked on P1 or P2"""
+        """Detect if user clicked on P1 or P2 (with zoom)"""
         if not self.edited_p1 or not self.edited_p2:
             return
 
         p1_x, p1_y = self.edited_p1
         p2_x, p2_y = self.edited_p2
-        dist_p1 = ((event.x - p1_x)**2 + (event.y - p1_y)**2)**0.5
-        dist_p2 = ((event.x - p2_x)**2 + (event.y - p2_y)**2)**0.5
 
-        if dist_p1 < 15:
+        # Reverse zoom to get image coordinates
+        click_x, click_y = self._reverse_zoom(event.x, event.y)
+
+        # Check distance with tolerance scaled by zoom
+        tolerance = 15 / self.zoom_level if self.zoom_level > 0 else 15
+        dist_p1 = ((click_x - p1_x)**2 + (click_y - p1_y)**2)**0.5
+        dist_p2 = ((click_x - p2_x)**2 + (click_y - p2_y)**2)**0.5
+
+        if dist_p1 < tolerance:
             self.dragging_point = "p1"
-        elif dist_p2 < 15:
+        elif dist_p2 < tolerance:
             self.dragging_point = "p2"
 
     def _on_canvas_drag(self, event):
-        """Update point position while dragging"""
-        if self.dragging_point == "p1":
-            self.edited_p1 = (event.x, event.y)
-        elif self.dragging_point == "p2":
-            self.edited_p2 = (event.x, event.y)
+        """Update point position while dragging (with zoom)"""
+        # Reverse zoom to get image coordinates
+        img_x, img_y = self._reverse_zoom(event.x, event.y)
 
-        self.canvas.delete("all")
-        if self.current_photo:
-            self.canvas.create_image(0, 0, image=self.current_photo, anchor=tk.NW)
-        self._draw_points()
-        self._update_display()
+        if self.dragging_point == "p1":
+            self.edited_p1 = (int(img_x), int(img_y))
+        elif self.dragging_point == "p2":
+            self.edited_p2 = (int(img_x), int(img_y))
+
+        self._redraw_canvas()
 
     def _on_canvas_release(self, event):
         """Stop dragging"""
         self.dragging_point = None
+
+    def _on_canvas_scroll(self, event):
+        """Handle mouse wheel zoom"""
+        # event.delta > 0 = scroll up = zoom in (Windows)
+        # event.num == 4 = scroll up (Linux)
+        if event.delta > 0 or event.num == 4:
+            self._zoom_in()
+        else:
+            self._zoom_out()
+
+    def _zoom_in(self):
+        """Increase zoom level"""
+        if self.zoom_level < self.max_zoom:
+            self.zoom_level = min(self.zoom_level + 0.2, self.max_zoom)
+            self._update_zoom_display()
+            self._redraw_canvas()
+
+    def _zoom_out(self):
+        """Decrease zoom level"""
+        if self.zoom_level > self.min_zoom:
+            self.zoom_level = max(self.zoom_level - 0.2, self.min_zoom)
+            self._update_zoom_display()
+            self._redraw_canvas()
+
+    def _zoom_reset(self):
+        """Reset zoom to 1.0x"""
+        self.zoom_level = 1.0
+        self.zoom_pan_x = 0
+        self.zoom_pan_y = 0
+        self._update_zoom_display()
+        self._redraw_canvas()
+
+    def _update_zoom_display(self):
+        """Update zoom label"""
+        self.zoom_lbl.config(text=f"{self.zoom_level:.1f}x")
+
+    def _redraw_canvas(self):
+        """Redraw canvas with current image and points"""
+        self.canvas.delete("all")
+        if self.current_photo:
+            # Scale and position image based on zoom
+            self.canvas.create_image(self.zoom_pan_x, self.zoom_pan_y, image=self.current_photo, anchor=tk.NW)
+        self._draw_points()
+        self._update_display()
 
     def _save_annotation(self):
         """Save edited points and cable state"""
