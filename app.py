@@ -3900,6 +3900,414 @@ Quality: {capture.get('quality_score', 'N/A')}"""
         self.root.mainloop()
 
 
+# ==================== CAPTURE EDITOR MODAL ====================
+class CaptureEditorModal:
+    """Modal window for editing capture annotations"""
+    def __init__(self, parent, capture, api_client, on_save_callback):
+        self.parent = parent
+        self.capture = capture
+        self.api_client = api_client
+        self.on_save_callback = on_save_callback
+        self.edited_p1 = (capture.get('p1_x', 0), capture.get('p1_y', 0))
+        self.edited_p2 = (capture.get('p2_x', 0), capture.get('p2_y', 0))
+        self.original_p1 = (capture.get('p1_x', 0), capture.get('p1_y', 0))
+        self.original_p2 = (capture.get('p2_x', 0), capture.get('p2_y', 0))
+        self.dragging_point = None
+        self.thread_mode = False
+        self.current_image_pil = None
+        self.current_photo = None
+        self.thresholded_image_pil = None
+        self.thresholded_photo = None
+        self.cable_state = tk.StringVar()
+
+        # Zoom state
+        self.zoom_level = 1.0
+        self.pan_x = 0
+        self.pan_y = 0
+        self.max_zoom = 5.0
+        self.min_zoom = 0.5
+        self.last_drag_x = 0
+        self.last_drag_y = 0
+        self.panning = False
+
+        self.modal = tk.Toplevel(parent)
+        self.modal.title("Edit Capture Annotation")
+        self.modal.geometry("1200x800")
+        self.modal.configure(bg=BG)
+        self.modal.resizable(False, False)
+
+        self._build_ui()
+        self._load_image()
+
+    def _build_ui(self):
+        # Header with close button
+        header = tk.Frame(self.modal, bg=PANEL, height=50)
+        header.pack(fill=tk.X, side=tk.TOP)
+        header.pack_propagate(False)
+
+        tk.Label(header, text=f"Edit: {self.capture.get('machine_name', 'Unknown')}", bg=PANEL, fg=TEXT, font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=15, pady=10)
+        tk.Frame(header, bg=PANEL).pack(fill=tk.X, expand=True)
+
+        close_btn = tk.Button(header, text="✕", command=self.modal.destroy,
+                             bg=RED, fg="#FFFFFF", font=("Arial", 14, "bold"),
+                             relief=tk.FLAT, bd=0, padx=10, pady=5)
+        close_btn.pack(side=tk.RIGHT, padx=10)
+        add_hover_effect(close_btn, RED, "#8B0F15", "#FFFFFF")
+
+        # Main content
+        main = tk.Frame(self.modal, bg=BG)
+        main.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Left: Canvas
+        left = tk.Frame(main, bg=BG)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+
+        # Canvas toolbar
+        toolbar = tk.Frame(left, bg=BG)
+        toolbar.pack(fill=tk.X, pady=(0, 10))
+
+        tk.Label(toolbar, text="Click & Drag points to edit | Scroll to Zoom", bg=BG, fg=TEXT2, font=("Arial", 9)).pack(side=tk.LEFT)
+
+        # Zoom controls
+        zoom_frame = tk.Frame(toolbar, bg=BG)
+        zoom_frame.pack(side=tk.RIGHT)
+
+        tk.Button(zoom_frame, text="🔍−", command=self._zoom_out, bg=PANEL, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, bd=0, padx=8, pady=4).pack(side=tk.LEFT, padx=2)
+
+        self.zoom_lbl = tk.Label(zoom_frame, text="1.0x", bg=PANEL, fg=TEXT, font=("Arial", 9), width=6)
+        self.zoom_lbl.pack(side=tk.LEFT, padx=5)
+
+        tk.Button(zoom_frame, text="🔍+", command=self._zoom_in, bg=PANEL, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, bd=0, padx=8, pady=4).pack(side=tk.LEFT, padx=2)
+
+        tk.Button(zoom_frame, text="⟲ Reset", command=self._zoom_reset, bg=PANEL, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, bd=0, padx=8, pady=4).pack(side=tk.LEFT, padx=2)
+
+        # Thread mode toggle
+        self.thread_btn = tk.Button(zoom_frame, text="🔀 THREAD", command=self._toggle_thread_mode,
+                                   bg=PANEL, fg=TEXT, font=("Arial", 9, "bold"),
+                                   relief=tk.FLAT, bd=0, padx=12, pady=4)
+        self.thread_btn.pack(side=tk.LEFT, padx=(10, 0))
+        add_hover_effect(self.thread_btn, PANEL, "#E8E8E8", TEXT)
+
+        self.canvas = tk.Canvas(left, bg=BORDER, width=600, height=700, cursor="crosshair")
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.canvas.bind("<Button-1>", self._on_canvas_press)
+        self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
+        self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
+        self.canvas.bind("<MouseWheel>", self._on_canvas_scroll)
+        self.canvas.bind("<Button-4>", self._on_canvas_scroll)  # Linux scroll up
+        self.canvas.bind("<Button-5>", self._on_canvas_scroll)  # Linux scroll down
+
+        # Right: Edit panel
+        right = tk.Frame(main, bg=PANEL, width=350)
+        right.pack(side=tk.RIGHT, fill=tk.BOTH, padx=10)
+        right.pack_propagate(False)
+
+        tk.Label(right, text="EDIT ANNOTATION", bg=PANEL, fg=TEXT, font=("Arial", 11, "bold")).pack(anchor=tk.W, padx=15, pady=(15, 10))
+
+        # Original points
+        tk.Label(right, text="ORIGINAL POINTS", bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 5))
+        self.orig_lbl = tk.Label(right, text="P1: (0, 0)\nP2: (0, 0)", bg=PANEL, fg=TEXT2, font=("Consolas", 8), justify=tk.LEFT)
+        self.orig_lbl.pack(anchor=tk.W, padx=20, pady=(0, 10))
+
+        # Edited points
+        tk.Label(right, text="EDITED POINTS", bg=PANEL, fg=ACCENT, font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 5))
+        self.edit_lbl = tk.Label(right, text="P1: (0, 0)\nP2: (0, 0)\nDistance: 0 px", bg=PANEL, fg=ACCENT, font=("Consolas", 8), justify=tk.LEFT)
+        self.edit_lbl.pack(anchor=tk.W, padx=20, pady=(0, 15))
+
+        tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X, pady=10, padx=15)
+
+        # Cable state
+        tk.Label(right, text="CABLE STATE", bg=PANEL, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 10))
+
+        states = [("🔴 No Cable", "no_cable"), ("🟠 Male End", "cable_male"), ("🟢 Good Cable", "cable_good")]
+        for label, value in states:
+            tk.Radiobutton(right, text=label, variable=self.cable_state, value=value,
+                          bg=PANEL, fg=TEXT, font=("Arial", 9),
+                          selectcolor=ACCENT, activebackground=PANEL, activeforeground=ACCENT).pack(anchor=tk.W, padx=25, pady=2)
+
+        tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X, pady=10, padx=15)
+
+        # Save button
+        self.save_btn = tk.Button(right, text="✓ SAVE", command=self._save_changes,
+                                 bg=GREEN, fg="#FFFFFF", font=("Arial", 10, "bold"),
+                                 relief=tk.FLAT, bd=0, padx=20, pady=12, state=tk.DISABLED)
+        self.save_btn.pack(fill=tk.X, padx=15, pady=(0, 8))
+        add_hover_effect(self.save_btn, GREEN, "#3E7C3F", "#FFFFFF")
+
+        # Cancel button
+        cancel_btn = tk.Button(right, text="✕ CANCEL", command=self.modal.destroy,
+                              bg=TEXT2, fg="#FFFFFF", font=("Arial", 10, "bold"),
+                              relief=tk.FLAT, bd=0, padx=20, pady=12)
+        cancel_btn.pack(fill=tk.X, padx=15)
+        add_hover_effect(cancel_btn, TEXT2, "#555555", "#FFFFFF")
+
+    def _load_image(self):
+        """Load the capture images (original and thresholded)"""
+        # Load original image
+        image_path = self.capture.get('image_original_path', '')
+        if image_path and Path(image_path).exists():
+            try:
+                self.current_image_pil = Image.open(image_path).convert('RGB')
+                print(f"✓ Loaded original image: {image_path}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to load original image: {str(e)}")
+                return
+        else:
+            messagebox.showerror("Error", "Image file not found")
+            return
+
+        # ALWAYS generate thresholded image from original (don't rely on API paths)
+        print("⚙ Generating thresholded image from original...")
+        self._generate_thresholded_image()
+
+        self._redraw_canvas()
+
+    def _generate_thresholded_image(self):
+        """Generate thresholded image from original using apply_threshold"""
+        try:
+            if self.current_image_pil is None:
+                print("✗ No original image loaded")
+                self.thresholded_image_pil = None
+                return
+
+            # Convert PIL to numpy array (RGB)
+            img_np = np.array(self.current_image_pil)
+
+            # Convert RGB to BGR for OpenCV
+            img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+
+            # Apply threshold using the standard config from utils.py
+            thresholded = apply_threshold(img_bgr)
+
+            # thresholded is now a binary (grayscale) image
+            # Convert to PIL Image
+            thresh_pil = Image.fromarray(thresholded)
+
+            # Convert to RGB for consistent handling (will display as grayscale since all channels are same)
+            self.thresholded_image_pil = thresh_pil.convert('RGB')
+
+            print(f"✓ Thresholded image generated: {self.thresholded_image_pil.size}")
+        except Exception as e:
+            import traceback
+            print(f"✗ Failed to generate thresholded image: {str(e)}")
+            traceback.print_exc()
+            self.thresholded_image_pil = None
+
+    def _redraw_canvas(self):
+        """Redraw canvas with image and points (with zoom and pan support)"""
+        self.canvas.delete("all")
+
+        # Choose which image to display
+        source_image = self.thresholded_image_pil if self.thread_mode else self.current_image_pil
+
+        if source_image:
+            # Resize image based on zoom level
+            if self.zoom_level != 1.0:
+                new_width = int(source_image.width * self.zoom_level)
+                new_height = int(source_image.height * self.zoom_level)
+                zoomed_img = source_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            else:
+                zoomed_img = source_image
+
+            # Convert to PhotoImage
+            photo = ImageTk.PhotoImage(zoomed_img)
+
+            # Display on canvas with pan offset
+            self.canvas.create_image(self.pan_x, self.pan_y, image=photo, anchor=tk.NW)
+            # Store reference to prevent garbage collection
+            self.canvas.image = photo
+
+        # Draw points with zoom and pan
+        if self.edited_p1 and self.edited_p2:
+            p1_x, p1_y = self.edited_p1
+            p2_x, p2_y = self.edited_p2
+
+            # Apply zoom and pan to point coordinates
+            p1_x_z = int(p1_x * self.zoom_level + self.pan_x)
+            p1_y_z = int(p1_y * self.zoom_level + self.pan_y)
+            p2_x_z = int(p2_x * self.zoom_level + self.pan_x)
+            p2_y_z = int(p2_y * self.zoom_level + self.pan_y)
+
+            # Draw circles (green) - scale with zoom
+            r = max(5, int(8 * self.zoom_level))
+            self.canvas.create_oval(p1_x_z-r, p1_y_z-r, p1_x_z+r, p1_y_z+r, fill=GREEN, outline=GREEN, width=2)
+            self.canvas.create_oval(p2_x_z-r, p2_y_z-r, p2_x_z+r, p2_y_z+r, fill=GREEN, outline=GREEN, width=2)
+
+            # Draw line (yellow)
+            self.canvas.create_line(p1_x_z, p1_y_z, p2_x_z, p2_y_z, fill=AMBER, width=2)
+
+            # Draw labels
+            self.canvas.create_text(p1_x_z-15, p1_y_z-15, text="P1", fill=GREEN, font=("Arial", 10, "bold"))
+            self.canvas.create_text(p2_x_z+15, p2_y_z+15, text="P2", fill=GREEN, font=("Arial", 10, "bold"))
+
+        self._update_display()
+
+    def _apply_zoom(self, x, y):
+        """Apply zoom transformation"""
+        return (int(x * self.zoom_level + self.zoom_pan_x), int(y * self.zoom_level + self.zoom_pan_y))
+
+    def _reverse_zoom(self, x, y):
+        """Reverse zoom transformation from canvas to image coordinates"""
+        return (int((x - self.zoom_pan_x) / self.zoom_level), int((y - self.zoom_pan_y) / self.zoom_level))
+
+    def _on_canvas_press(self, event):
+        """Detect if user clicked on P1/P2 (for point drag) or empty area (for pan)"""
+        self.last_drag_x = event.x
+        self.last_drag_y = event.y
+
+        if not self.edited_p1 or not self.edited_p2:
+            self.panning = True
+            return
+
+        p1_x, p1_y = self.edited_p1
+        p2_x, p2_y = self.edited_p2
+
+        # Convert click to image coordinates (reverse zoom and pan)
+        click_x = int((event.x - self.pan_x) / self.zoom_level) if self.zoom_level > 0 else event.x
+        click_y = int((event.y - self.pan_y) / self.zoom_level) if self.zoom_level > 0 else event.y
+
+        # Check distance with tolerance scaled by zoom
+        tolerance = 15 / self.zoom_level if self.zoom_level > 0 else 15
+        dist_p1 = ((click_x - p1_x)**2 + (click_y - p1_y)**2)**0.5
+        dist_p2 = ((click_x - p2_x)**2 + (click_y - p2_y)**2)**0.5
+
+        if dist_p1 < tolerance:
+            self.dragging_point = "p1"
+            self.panning = False
+        elif dist_p2 < tolerance:
+            self.dragging_point = "p2"
+            self.panning = False
+        else:
+            # Clicked on empty area - allow panning
+            self.panning = True
+
+    def _on_canvas_drag(self, event):
+        """Handle point dragging or image panning"""
+        if self.panning:
+            # Pan the image
+            delta_x = event.x - self.last_drag_x
+            delta_y = event.y - self.last_drag_y
+            self.pan_x += delta_x
+            self.pan_y += delta_y
+        else:
+            # Drag point
+            if self.dragging_point == "p1":
+                img_x = int((event.x - self.pan_x) / self.zoom_level) if self.zoom_level > 0 else event.x
+                img_y = int((event.y - self.pan_y) / self.zoom_level) if self.zoom_level > 0 else event.y
+                self.edited_p1 = (img_x, img_y)
+                self._enable_save_button()
+            elif self.dragging_point == "p2":
+                img_x = int((event.x - self.pan_x) / self.zoom_level) if self.zoom_level > 0 else event.x
+                img_y = int((event.y - self.pan_y) / self.zoom_level) if self.zoom_level > 0 else event.y
+                self.edited_p2 = (img_x, img_y)
+                self._enable_save_button()
+
+        self.last_drag_x = event.x
+        self.last_drag_y = event.y
+        self._redraw_canvas()
+
+    def _on_canvas_release(self, event):
+        """Stop dragging point or panning"""
+        self.dragging_point = None
+        self.panning = False
+
+    def _on_canvas_scroll(self, event):
+        """Handle mouse wheel zoom"""
+        if event.delta > 0 or event.num == 4:
+            self._zoom_in()
+        else:
+            self._zoom_out()
+
+    def _zoom_in(self):
+        """Increase zoom level"""
+        if self.zoom_level < self.max_zoom:
+            self.zoom_level = min(self.zoom_level + 0.2, self.max_zoom)
+            self.zoom_lbl.config(text=f"{self.zoom_level:.1f}x")
+            self._redraw_canvas()
+
+    def _zoom_out(self):
+        """Decrease zoom level"""
+        if self.zoom_level > self.min_zoom:
+            self.zoom_level = max(self.zoom_level - 0.2, self.min_zoom)
+            self.zoom_lbl.config(text=f"{self.zoom_level:.1f}x")
+            self._redraw_canvas()
+
+    def _zoom_reset(self):
+        """Reset zoom to 1.0x and reset pan"""
+        self.zoom_level = 1.0
+        self.pan_x = 0
+        self.pan_y = 0
+        self.zoom_lbl.config(text="1.0x")
+        self._redraw_canvas()
+
+    def _toggle_thread_mode(self):
+        """Toggle thread mode for verification"""
+        print(f"[DEBUG] Toggling thread mode - current: {self.thread_mode}, has thresholded: {self.thresholded_image_pil is not None}")
+
+        if not self.thresholded_image_pil:
+            print("[DEBUG] Thresholded image is None, trying to generate...")
+            # Show status
+            self.thread_btn.config(text="🔄 GENERATING...", state=tk.DISABLED)
+            self.modal.update()
+
+            self._generate_thresholded_image()
+
+            # Restore button
+            self.thread_btn.config(text="🔀 THREAD", state=tk.NORMAL)
+
+            if not self.thresholded_image_pil:
+                messagebox.showwarning("Thread Mode", "Thresholded image could not be generated.\nMake sure opencv-python is installed.")
+                return
+
+        self.thread_mode = not self.thread_mode
+        print(f"[DEBUG] Thread mode is now: {self.thread_mode}")
+
+        if self.thread_mode:
+            self.thread_btn.config(bg=ACCENT, fg="#FFFFFF", text="🔀 ORIGINAL")
+        else:
+            self.thread_btn.config(bg=PANEL, fg=TEXT, text="🔀 THREAD")
+
+        self._redraw_canvas()
+
+    def _update_display(self):
+        """Update info labels"""
+        self.orig_lbl.config(text=f"P1: {self.original_p1}\nP2: {self.original_p2}")
+
+        if self.edited_p1 and self.edited_p2:
+            dist = ((self.edited_p2[0]-self.edited_p1[0])**2 + (self.edited_p2[1]-self.edited_p1[1])**2)**0.5
+            self.edit_lbl.config(text=f"P1: {self.edited_p1}\nP2: {self.edited_p2}\nDistance: {dist:.0f} px")
+
+    def _enable_save_button(self):
+        """Enable save button if changes detected"""
+        if self.edited_p1 != self.original_p1 or self.edited_p2 != self.original_p2:
+            self.save_btn.config(state=tk.NORMAL)
+
+    def _save_changes(self):
+        """Save edited annotation"""
+        try:
+            payload = {
+                "p1_x": int(self.edited_p1[0]),
+                "p1_y": int(self.edited_p1[1]),
+                "p2_x": int(self.edited_p2[0]),
+                "p2_y": int(self.edited_p2[1]),
+                "annoteur_approved": True,
+                "cable_state": self.cable_state.get() or self.capture.get('cable_state', 'cable_good')
+            }
+
+            self.api_client.put(f"/admin/captures/{self.capture.get('id')}/annotate", payload)
+            messagebox.showinfo("Success", "Annotation saved!")
+            self.modal.destroy()
+            if self.on_save_callback:
+                self.on_save_callback()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save: {str(e)}")
+
+    def show(self):
+        """Show modal and wait"""
+        self.modal.transient(self.parent)
+        self.modal.grab_set()
+        self.parent.wait_window(self.modal)
+
 # ==================== ANNOTEUR APP (Interactive Point Editing) ====================
 class AnnoteurInteractiveApp:
     """Interactive annotation interface where annoteurs can edit keypoints and label cable state"""
@@ -3908,22 +4316,7 @@ class AnnoteurInteractiveApp:
         self.username = username
         self.user_id = user_id
         self.api_client = api_client
-        self.captures = []
-        self.current_idx = 0
-        self.current_image_pil = None
-        self.current_photo = None
-
-        # Editing state
-        self.edited_p1 = None
-        self.edited_p2 = None
-        self.dragging_point = None  # "p1", "p2", or None
-
-        # Zoom state
-        self.zoom_level = 1.0
-        self.zoom_pan_x = 0
-        self.zoom_pan_y = 0
-        self.max_zoom = 5.0
-        self.min_zoom = 0.5
+        self.current_page = "annotation"
 
         # Create root window FIRST
         self.root = tk.Tk()
@@ -3933,13 +4326,22 @@ class AnnoteurInteractiveApp:
         self.root.state('zoomed')
 
         # NOW create StringVar after root exists
-        self.cable_state = tk.StringVar()
+        self.content_container = None
+
+        # Initialize camera (like MainApp)
+        self.cap = None
+        self.pixel_measure = None
+        self.camera_ok = False
+        self.current_frame = None
+        self.frame_count = 0
+        self.last_zoom = 1.0
+        self._loop_running = True
+        self._init_camera()
 
         self._build_ui()
-        self._load_captures()
 
     def _build_ui(self):
-        # Header
+        # Top header with branding and user info
         top = tk.Frame(self.root, bg=PANEL, height=58)
         top.pack(fill=tk.X, side=tk.TOP)
         top.pack_propagate(False)
@@ -3952,322 +4354,557 @@ class AnnoteurInteractiveApp:
         quit_btn.pack(side=tk.LEFT, padx=10)
         add_hover_effect(quit_btn, RED, RED, "#FFFFFF")
 
-        # Main content
-        main = tk.Frame(self.root, bg=BG)
-        main.pack(fill=tk.BOTH, expand=True)
+        # Navigation bar
+        navbar = tk.Frame(self.root, bg=BORDER, height=50)
+        navbar.pack(fill=tk.X, side=tk.TOP)
+        navbar.pack_propagate(False)
 
-        # Left: Image editor (canvas for interactive editing)
-        left = tk.Frame(main, bg=BG)
-        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+        nav_items = [
+            ("BELLMOUNTH CAPTURES", "annotation"),
+            ("STATE CABLE", "statecable"),
+            ("STATE CAPTURES", "state_captures"),
+            ("NOTIFICATIONS", "notification"),
+            ("RECLAMATIONS", "reclamation")
+        ]
 
-        # Instructions and zoom controls
-        top_left = tk.Frame(left, bg=BG)
-        top_left.pack(fill=tk.X, pady=(0, 10))
+        for label, page_id in nav_items:
+            btn = tk.Button(navbar, text=label, command=lambda p=page_id: self._switch_page(p),
+                           bg=BORDER, fg=TEXT, font=("Arial", 10, "bold"),
+                           relief=tk.FLAT, bd=0, padx=20, pady=10)
+            btn.pack(side=tk.LEFT, padx=5)
+            btn.page_id = page_id
+            self._nav_buttons = getattr(self, '_nav_buttons', {})
+            self._nav_buttons[page_id] = btn
 
-        tk.Label(top_left, text="Click & Drag to Edit Points | Scroll to Zoom", bg=BG, fg=TEXT2, font=("Arial", 10)).pack(side=tk.LEFT)
+        # Content container
+        self.content_container = tk.Frame(self.root, bg=BG)
+        self.content_container.pack(fill=tk.BOTH, expand=True)
 
-        zoom_frame = tk.Frame(top_left, bg=BG)
-        zoom_frame.pack(side=tk.RIGHT)
+        # Show initial page
+        self._switch_page("annotation")
 
-        tk.Button(zoom_frame, text="🔍−", command=self._zoom_out, bg=PANEL, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, bd=0, padx=8, pady=4).pack(side=tk.LEFT, padx=2)
+        # Start persistent camera loop after UI is built
+        self._update_camera_loop()
 
-        self.zoom_lbl = tk.Label(zoom_frame, text="1.0x", bg=PANEL, fg=TEXT, font=("Arial", 9), width=6)
-        self.zoom_lbl.pack(side=tk.LEFT, padx=5)
+        # Handle window close
+        self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
 
-        tk.Button(zoom_frame, text="🔍+", command=self._zoom_in, bg=PANEL, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, bd=0, padx=8, pady=4).pack(side=tk.LEFT, padx=2)
-
-        tk.Button(zoom_frame, text="⟲ Reset", command=self._zoom_reset, bg=PANEL, fg=TEXT, font=("Arial", 9), relief=tk.FLAT, bd=0, padx=8, pady=4).pack(side=tk.LEFT, padx=2)
-
-        self.canvas = tk.Canvas(left, bg=BORDER, width=700, height=700, cursor="crosshair")
-        self.canvas.pack(fill=tk.BOTH, expand=True)
-        self.canvas.bind("<Button-1>", self._on_canvas_press)
-        self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
-        self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
-        self.canvas.bind("<MouseWheel>", self._on_canvas_scroll)
-        self.canvas.bind("<Button-4>", self._on_canvas_scroll)  # Linux scroll up
-        self.canvas.bind("<Button-5>", self._on_canvas_scroll)  # Linux scroll down
-
-        # Right: Annotation panel
-        right = tk.Frame(main, bg=PANEL, width=400)
-        right.pack(side=tk.RIGHT, fill=tk.BOTH, padx=10, pady=10)
-        right.pack_propagate(False)
-
-        # Status and navigation
-        tk.Label(right, text="ANNOTATION PANEL", bg=PANEL, fg=TEXT, font=("Arial", 11, "bold")).pack(anchor=tk.W, padx=15, pady=(15, 10))
-
-        self.status_lbl = tk.Label(right, text="Capture 0/0", bg=PANEL, fg=TEXT2, font=("Arial", 9))
-        self.status_lbl.pack(anchor=tk.W, padx=15)
-
-        tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X, pady=10, padx=15)
-
-        # Original vs Edited comparison
-        tk.Label(right, text="ORIGINAL POINTS", bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 5))
-        self.orig_lbl = tk.Label(right, text="P1: (0, 0)\nP2: (0, 0)\nDistance: 0 px → 0 mm", bg=PANEL, fg=TEXT2, font=("Consolas", 8), justify=tk.LEFT)
-        self.orig_lbl.pack(anchor=tk.W, padx=20, pady=(0, 10))
-
-        tk.Label(right, text="EDITED POINTS", bg=PANEL, fg=ACCENT, font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 5))
-        self.edit_lbl = tk.Label(right, text="P1: (0, 0)\nP2: (0, 0)\nDistance: 0 px → 0 mm", bg=PANEL, fg=ACCENT, font=("Consolas", 8), justify=tk.LEFT)
-        self.edit_lbl.pack(anchor=tk.W, padx=20, pady=(0, 10))
-
-        tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X, pady=10, padx=15)
-
-        # Cable state
-        tk.Label(right, text="CABLE STATE", bg=PANEL, fg=TEXT, font=("Arial", 11, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 10))
-
-        states = [("🔴 No Cable", "no_cable"), ("🟠 Male End", "cable_male"), ("🟢 Good Cable", "cable_good")]
-        for label, value in states:
-            tk.Radiobutton(right, text=label, variable=self.cable_state, value=value,
-                          bg=PANEL, fg=TEXT, font=("Arial", 10),
-                          selectcolor=ACCENT, activebackground=PANEL, activeforeground=ACCENT).pack(anchor=tk.W, padx=25, pady=3)
-
-        tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X, pady=10, padx=15)
-
-        # Action buttons
-        button_frame = tk.Frame(right, bg=PANEL)
-        button_frame.pack(fill=tk.X, padx=15, pady=(10, 15))
-
-        def on_save():
-            if not self.cable_state.get():
-                messagebox.showwarning("Validation", "Please select cable state")
+    def _init_camera(self):
+        """Initialize camera and SDK (like MainApp)"""
+        self.camera_ok = False
+        try:
+            self.cap = get_camera()
+            if self.cap is None or not self.cap.isOpened():
+                print("Camera not available")
                 return
-            if self.edited_p1 is None or self.edited_p2 is None:
-                messagebox.showwarning("Validation", "Please set both P1 and P2 points")
+
+            # Read first frame to get dimensions
+            ret, frame = self.cap.read()
+            if not ret:
+                print("Failed to read frame from camera")
                 return
-            self._save_annotation()
 
-        save_btn = tk.Button(button_frame, text="✓ SAVE & NEXT", command=on_save,
-                            bg=GREEN, fg="#FFFFFF", font=("Arial", 10, "bold"),
-                            relief=tk.FLAT, bd=0, padx=15, pady=10)
-        save_btn.pack(fill=tk.X, pady=(0, 8))
-        add_hover_effect(save_btn, GREEN, GREEN, "#FFFFFF")
+            self.camera_width = frame.shape[1]
+            self.camera_height = frame.shape[0]
+            self.pixel_measure = PixelMeasure(camera_width=self.camera_width)
+            self.camera_ok = True
+            print(f"Camera initialized: {self.camera_width}x{self.camera_height}")
+        except Exception as e:
+            print(f"Camera init error: {e}")
 
-        skip_btn = tk.Button(button_frame, text="⊘ SKIP", command=self._next_capture,
-                            bg=AMBER, fg="#FFFFFF", font=("Arial", 10, "bold"),
-                            relief=tk.FLAT, bd=0, padx=15, pady=10)
-        skip_btn.pack(fill=tk.X)
-        add_hover_effect(skip_btn, AMBER, AMBER, "#FFFFFF")
+    def _update_camera_loop(self):
+        """Persistent camera update loop (runs every 10ms)"""
+        if self._loop_running and self.camera_ok:
+            try:
+                ret, frame = self.cap.read()
+                if ret:
+                    self.current_frame = frame
+                    self.frame_count += 1
 
-        # Navigation
-        nav_frame = tk.Frame(right, bg=PANEL)
-        nav_frame.pack(fill=tk.X, padx=15, pady=(10, 15))
+                    # Update SDK values every 10 frames
+                    if self.frame_count % 10 == 0:
+                        try:
+                            self.pixel_measure.update()
+                        except:
+                            pass
+            except Exception as e:
+                print(f"Camera update error: {e}")
 
-        tk.Button(nav_frame, text="◀ PREV", command=self._prev_capture,
-                 bg=TEXT2, fg="#FFFFFF", font=("Arial", 9, "bold"),
-                 relief=tk.FLAT, bd=0, padx=10, pady=6, width=10).pack(side=tk.LEFT, padx=(0, 5))
+        # Schedule next update (10ms for ~100 FPS)
+        if self._loop_running:
+            self.root.after(10, self._update_camera_loop)
 
-        tk.Frame(nav_frame, bg=PANEL).pack(fill=tk.X, expand=True)
+    def _switch_page(self, page_id):
+        """Switch between different pages in the annoteur app"""
+        self.current_page = page_id
 
-        tk.Button(nav_frame, text="NEXT ▶", command=self._next_capture,
-                 bg=TEXT2, fg="#FFFFFF", font=("Arial", 9, "bold"),
-                 relief=tk.FLAT, bd=0, padx=10, pady=6, width=10).pack(side=tk.RIGHT)
+        # Clear content container
+        for widget in self.content_container.winfo_children():
+            widget.destroy()
 
-    def _load_captures(self):
+        # Update navbar button highlights
+        if hasattr(self, '_nav_buttons'):
+            for pid, btn in self._nav_buttons.items():
+                if pid == page_id:
+                    btn.config(bg=ACCENT, fg="#FFFFFF")
+                else:
+                    btn.config(bg=BORDER, fg=TEXT)
+
+        # Show appropriate page
+        if page_id == "annotation":
+            self._show_annotation_page()
+        elif page_id == "statecable":
+            self._show_statecable_page()
+        elif page_id == "state_captures":
+            self._show_state_captures_page()
+        elif page_id == "notification":
+            self._show_notification_page()
+        elif page_id == "reclamation":
+            self._show_reclamation_page()
+
+    def _show_annotation_page(self):
+        """Display table of pending captures"""
+        frame = tk.Frame(self.content_container, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text="BELLMOUNTH CAPTURES", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        # Table header
+        header = tk.Frame(frame, bg=PANEL)
+        header.pack(fill=tk.X, pady=(0, 10))
+
+        cols = [("MACHINE", 15), ("DATE", 18), ("SWITCH", 15), ("STATE", 10), ("VIEW", 8), ("ACTION", 20)]
+        for col_name, width in cols:
+            tk.Label(header, text=col_name, bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold"), width=width, anchor="w").pack(side=tk.LEFT, padx=10, pady=10)
+
+        # Scrollable table content
+        table_container = tk.Frame(frame, bg=BG)
+        table_container.pack(fill=tk.BOTH, expand=True)
+
+        scrollbar = tk.Scrollbar(table_container, bg=BORDER)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        table_frame = tk.Frame(table_container, bg=BG)
+        table_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        canvas_scroll = tk.Canvas(table_frame, bg=BG, highlightthickness=0, yscrollcommand=scrollbar.set)
+        canvas_scroll.pack(fill=tk.BOTH, expand=True)
+        scrollbar.config(command=canvas_scroll.yview)
+
+        rows_frame = tk.Frame(canvas_scroll, bg=BG)
+        canvas_scroll.create_window((0, 0), window=rows_frame, anchor="nw")
+
         try:
             response = self.api_client.get("/admin/captures?status=pending")
-            self.captures = response if isinstance(response, list) else []
-            self.current_idx = 0
-            self._show_capture()
+            captures = response if isinstance(response, list) else []
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load captures: {str(e)}")
-            self.captures = []
+            captures = []
 
-    def _show_capture(self):
-        if not self.captures:
-            self.canvas.delete("all")
-            self.canvas.create_text(350, 350, text="All captures reviewed!", font=("Arial", 16), fill=TEXT2)
-            return
+        # Populate table rows
+        if captures:
+            for i, capture in enumerate(captures):
+                row = tk.Frame(rows_frame, bg=CARD, relief=tk.FLAT, bd=1)
+                row.pack(fill=tk.X, pady=5)
 
-        capture = self.captures[self.current_idx]
+                machine = capture.get('machine_name', 'N/A')
+                date_str = capture.get('created_at', 'N/A')[:10]
+                switch = capture.get('switch_name', 'N/A')
+                state = capture.get('cable_state', 'PENDING')
+                state_color = GREEN if state == "cable_good" else AMBER if state == "cable_male" else RED
 
-        # Reset zoom when loading new capture
-        self.zoom_level = 1.0
-        self.zoom_pan_x = 0
-        self.zoom_pan_y = 0
-        self._update_zoom_display()
+                # Columns
+                tk.Label(row, text=machine, bg=CARD, fg=TEXT, font=("Arial", 9), width=15, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+                tk.Label(row, text=date_str, bg=CARD, fg=TEXT, font=("Arial", 9), width=18, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+                tk.Label(row, text=switch, bg=CARD, fg=TEXT, font=("Arial", 9), width=15, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
 
-        # Load image
-        image_path = capture.get('image_original_path', '')
-        if image_path and Path(image_path).exists():
-            self.current_image_pil = Image.open(image_path)
-            self.current_image_pil.thumbnail((700, 700), Image.Resampling.LANCZOS)
-            self.current_photo = ImageTk.PhotoImage(self.current_image_pil)
+                state_lbl = tk.Label(row, text=state.upper(), bg=state_color, fg="#FFFFFF", font=("Arial", 8, "bold"), width=10, anchor="center")
+                state_lbl.pack(side=tk.LEFT, padx=10, pady=8)
 
-            # Initialize edited points from capture data
-            self.edited_p1 = (capture.get('p1_x', 0), capture.get('p1_y', 0))
-            self.edited_p2 = (capture.get('p2_x', 0), capture.get('p2_y', 0))
+                # View button
+                view_btn = tk.Button(row, text="VIEW", command=lambda c=capture: self._open_capture_modal(c),
+                                    bg=ACCENT, fg="#FFFFFF", font=("Arial", 9, "bold"),
+                                    relief=tk.FLAT, bd=0, padx=12, pady=4)
+                view_btn.pack(side=tk.LEFT, padx=10, pady=8)
+                add_hover_effect(view_btn, ACCENT, "#8B0F15", "#FFFFFF")
 
-            self._redraw_canvas()
-            self.status_lbl.config(text=f"Capture {self.current_idx + 1}/{len(self.captures)}")
+                # Action buttons frame
+                action_frame = tk.Frame(row, bg=CARD)
+                action_frame.pack(side=tk.RIGHT, padx=10, pady=8)
 
-    def _apply_zoom(self, x, y):
-        """Apply zoom transformation to canvas coordinates"""
-        return (x * self.zoom_level + self.zoom_pan_x, y * self.zoom_level + self.zoom_pan_y)
+                accept_btn = tk.Button(action_frame, text="✓ ACCEPT", command=lambda c=capture: self._accept_capture(c),
+                                      bg=GREEN, fg="#FFFFFF", font=("Arial", 8, "bold"),
+                                      relief=tk.FLAT, bd=0, padx=10, pady=4)
+                accept_btn.pack(side=tk.LEFT, padx=3)
+                add_hover_effect(accept_btn, GREEN, "#3E7C3F", "#FFFFFF")
 
-    def _reverse_zoom(self, x, y):
-        """Reverse zoom transformation from canvas to image coordinates"""
-        return ((x - self.zoom_pan_x) / self.zoom_level, (y - self.zoom_pan_y) / self.zoom_level)
-
-    def _draw_points(self):
-        """Draw P1, P2 circles and line on canvas with zoom"""
-        if self.edited_p1 and self.edited_p2:
-            p1_x, p1_y = self.edited_p1
-            p2_x, p2_y = self.edited_p2
-
-            # Apply zoom transformation
-            p1_x_z, p1_y_z = self._apply_zoom(p1_x, p1_y)
-            p2_x_z, p2_y_z = self._apply_zoom(p2_x, p2_y)
-
-            # Draw circles (green) - scale radius with zoom
-            r = max(5, int(8 * self.zoom_level))
-            self.canvas.create_oval(p1_x_z-r, p1_y_z-r, p1_x_z+r, p1_y_z+r, fill=GREEN, outline=GREEN, width=2)
-            self.canvas.create_oval(p2_x_z-r, p2_y_z-r, p2_x_z+r, p2_y_z+r, fill=GREEN, outline=GREEN, width=2)
-
-            # Draw line (yellow)
-            self.canvas.create_line(p1_x_z, p1_y_z, p2_x_z, p2_y_z, fill=AMBER, width=2)
-
-            # Draw labels
-            self.canvas.create_text(p1_x_z-15, p1_y_z-15, text="P1", fill=GREEN, font=("Arial", 10, "bold"))
-            self.canvas.create_text(p2_x_z+15, p2_y_z+15, text="P2", fill=GREEN, font=("Arial", 10, "bold"))
-
-    def _update_display(self):
-        """Update the info labels"""
-        if not self.captures:
-            return
-
-        capture = self.captures[self.current_idx]
-        orig_p1 = (capture.get('p1_x', 0), capture.get('p1_y', 0))
-        orig_p2 = (capture.get('p2_x', 0), capture.get('p2_y', 0))
-        orig_dist = ((orig_p2[0]-orig_p1[0])**2 + (orig_p2[1]-orig_p1[1])**2)**0.5
-        measured_mm = capture.get('measured_distance_mm', 0)
-
-        self.orig_lbl.config(text=f"P1: {orig_p1}\nP2: {orig_p2}\nDistance: {orig_dist:.0f} px → {measured_mm} mm")
-
-        if self.edited_p1 and self.edited_p2:
-            edit_dist = ((self.edited_p2[0]-self.edited_p1[0])**2 + (self.edited_p2[1]-self.edited_p1[1])**2)**0.5
-            self.edit_lbl.config(text=f"P1: {self.edited_p1}\nP2: {self.edited_p2}\nDistance: {edit_dist:.0f} px")
-
-    def _on_canvas_press(self, event):
-        """Detect if user clicked on P1 or P2 (with zoom)"""
-        if not self.edited_p1 or not self.edited_p2:
-            return
-
-        p1_x, p1_y = self.edited_p1
-        p2_x, p2_y = self.edited_p2
-
-        # Reverse zoom to get image coordinates
-        click_x, click_y = self._reverse_zoom(event.x, event.y)
-
-        # Check distance with tolerance scaled by zoom
-        tolerance = 15 / self.zoom_level if self.zoom_level > 0 else 15
-        dist_p1 = ((click_x - p1_x)**2 + (click_y - p1_y)**2)**0.5
-        dist_p2 = ((click_x - p2_x)**2 + (click_y - p2_y)**2)**0.5
-
-        if dist_p1 < tolerance:
-            self.dragging_point = "p1"
-        elif dist_p2 < tolerance:
-            self.dragging_point = "p2"
-
-    def _on_canvas_drag(self, event):
-        """Update point position while dragging (with zoom)"""
-        # Reverse zoom to get image coordinates
-        img_x, img_y = self._reverse_zoom(event.x, event.y)
-
-        if self.dragging_point == "p1":
-            self.edited_p1 = (int(img_x), int(img_y))
-        elif self.dragging_point == "p2":
-            self.edited_p2 = (int(img_x), int(img_y))
-
-        self._redraw_canvas()
-
-    def _on_canvas_release(self, event):
-        """Stop dragging"""
-        self.dragging_point = None
-
-    def _on_canvas_scroll(self, event):
-        """Handle mouse wheel zoom"""
-        # event.delta > 0 = scroll up = zoom in (Windows)
-        # event.num == 4 = scroll up (Linux)
-        if event.delta > 0 or event.num == 4:
-            self._zoom_in()
+                refuse_btn = tk.Button(action_frame, text="✗ REFUSE", command=lambda c=capture: self._refuse_capture(c),
+                                      bg=RED, fg="#FFFFFF", font=("Arial", 8, "bold"),
+                                      relief=tk.FLAT, bd=0, padx=10, pady=4)
+                refuse_btn.pack(side=tk.LEFT, padx=3)
+                add_hover_effect(refuse_btn, RED, "#8B0F15", "#FFFFFF")
         else:
-            self._zoom_out()
+            tk.Label(rows_frame, text="No pending captures", bg=BG, fg=TEXT2, font=("Arial", 11)).pack(pady=20)
 
-    def _zoom_in(self):
-        """Increase zoom level"""
-        if self.zoom_level < self.max_zoom:
-            self.zoom_level = min(self.zoom_level + 0.2, self.max_zoom)
-            self._update_zoom_display()
-            self._redraw_canvas()
+        rows_frame.update_idletasks()
+        canvas_scroll.config(scrollregion=canvas_scroll.bbox("all"))
 
-    def _zoom_out(self):
-        """Decrease zoom level"""
-        if self.zoom_level > self.min_zoom:
-            self.zoom_level = max(self.zoom_level - 0.2, self.min_zoom)
-            self._update_zoom_display()
-            self._redraw_canvas()
+    def _open_capture_modal(self, capture):
+        """Open modal to view and edit capture"""
+        modal = CaptureEditorModal(self.root, capture, self.api_client, self._refresh_annotation_page)
+        modal.show()
 
-    def _zoom_reset(self):
-        """Reset zoom to 1.0x"""
-        self.zoom_level = 1.0
-        self.zoom_pan_x = 0
-        self.zoom_pan_y = 0
-        self._update_zoom_display()
-        self._redraw_canvas()
+    def _refresh_annotation_page(self):
+        """Refresh the annotation page (callback from modal)"""
+        self._show_annotation_page()
 
-    def _update_zoom_display(self):
-        """Update zoom label"""
-        self.zoom_lbl.config(text=f"{self.zoom_level:.1f}x")
+    def _accept_capture(self, capture):
+        """Accept a capture"""
+        result = messagebox.askyesno("Confirm", f"Accept capture from {capture.get('machine_name', 'Unknown')}?")
+        if result:
+            try:
+                self.api_client.put(f"/admin/captures/{capture.get('id')}/annotate", {
+                    "p1_x": int(capture.get('p1_x', 0)),
+                    "p1_y": int(capture.get('p1_y', 0)),
+                    "p2_x": int(capture.get('p2_x', 0)),
+                    "p2_y": int(capture.get('p2_y', 0)),
+                    "annoteur_approved": True,
+                    "cable_state": capture.get('cable_state', 'cable_good')
+                })
+                messagebox.showinfo("Success", "Capture accepted")
+                self._refresh_annotation_page()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to accept capture: {str(e)}")
 
-    def _redraw_canvas(self):
-        """Redraw canvas with current image and points"""
-        self.canvas.delete("all")
-        if self.current_photo:
-            # Scale and position image based on zoom
-            self.canvas.create_image(self.zoom_pan_x, self.zoom_pan_y, image=self.current_photo, anchor=tk.NW)
-        self._draw_points()
-        self._update_display()
+    def _refuse_capture(self, capture):
+        """Refuse a capture"""
+        result = messagebox.askyesno("Confirm", f"Refuse capture from {capture.get('machine_name', 'Unknown')}?")
+        if result:
+            try:
+                self.api_client.put(f"/admin/captures/{capture.get('id')}/reject", {})
+                messagebox.showinfo("Success", "Capture refused")
+                self._refresh_annotation_page()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to refuse capture: {str(e)}")
 
-    def _save_annotation(self):
-        """Save edited points and cable state"""
-        if not self.captures or not self.edited_p1 or not self.edited_p2:
-            return
+    def _show_statecable_page(self):
+        """Display live camera feed with state selection and auto-capture"""
+        frame = tk.Frame(self.content_container, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
-        capture = self.captures[self.current_idx]
+        tk.Label(frame, text="STATE CABLE", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
 
-        try:
-            # Update capture with edited points and approval
-            payload = {
-                "p1_x": int(self.edited_p1[0]),
-                "p1_y": int(self.edited_p1[1]),
-                "p2_x": int(self.edited_p2[0]),
-                "p2_y": int(self.edited_p2[1]),
-                "annoteur_approved": True
-            }
+        # Main layout: camera on left, sidebar on right
+        main_container = tk.Frame(frame, bg=BG)
+        main_container.pack(fill=tk.BOTH, expand=True)
 
-            result = self.api_client.put(f"/admin/captures/{capture.get('id')}/annotate", payload)
-            if result:
-                messagebox.showinfo("Success", f"Annotation saved!\n{self.cable_state.get()}")
-                self._next_capture()
-            else:
-                messagebox.showerror("Error", "Failed to save annotation")
-        except Exception as e:
-            messagebox.showerror("Error", f"Save failed: {str(e)}")
+        # Left: Camera feed
+        left = tk.Frame(main_container, bg=BG)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 20))
 
-    def _next_capture(self):
-        """Move to next capture"""
-        if self.current_idx < len(self.captures) - 1:
-            self.current_idx += 1
-            self.cable_state.set("")
-            self._show_capture()
+        tk.Label(left, text="Live Camera Feed", bg=BG, fg=TEXT, font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=(0, 10))
 
-    def _prev_capture(self):
-        """Move to previous capture"""
-        if self.current_idx > 0:
-            self.current_idx -= 1
-            self.cable_state.set("")
-            self._show_capture()
+        camera_canvas = tk.Canvas(left, bg=BORDER, width=700, height=600, cursor="crosshair")
+        camera_canvas.pack(fill=tk.BOTH, expand=True)
+
+        # Show error if no camera
+        if not self.camera_ok:
+            camera_canvas.create_text(350, 300, text="❌ Camera Not Available\nPlease check hardware",
+                                     font=("Arial", 14), fill=TEXT2, justify=tk.CENTER)
+
+        # Right: Sidebar controls
+        right = tk.Frame(main_container, bg=PANEL, width=280)
+        right.pack(side=tk.RIGHT, fill=tk.BOTH)
+        right.pack_propagate(False)
+
+        tk.Label(right, text="CAPTURE CONTROLS", bg=PANEL, fg=TEXT, font=("Arial", 11, "bold")).pack(anchor=tk.W, padx=15, pady=(15, 20))
+
+        # Zoom level display
+        tk.Label(right, text="ZOOM LEVEL", bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 5))
+        zoom_var = tk.StringVar(value="1.0x")
+        zoom_lbl = tk.Label(right, textvariable=zoom_var, bg=BG, fg=ACCENT, font=("Arial", 24, "bold"), relief=tk.SUNKEN, bd=2)
+        zoom_lbl.pack(anchor=tk.CENTER, padx=15, pady=(0, 20), ipady=10, fill=tk.X)
+
+        # State dropdown
+        tk.Label(right, text="CABLE STATE", bg=PANEL, fg=TEXT, font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 8))
+        state_var = tk.StringVar(value="empty")
+        state_menu = tk.OptionMenu(right, state_var, "empty", "bad cable", "correct cable")
+        state_menu.config(bg=BG, fg=TEXT, font=("Arial", 10), relief=tk.FLAT, bd=0,
+                         activebackground=BORDER, activeforeground=ACCENT, highlightthickness=0, width=25)
+        state_menu.pack(fill=tk.X, padx=15, pady=(0, 20), ipady=6)
+
+        tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X, pady=10, padx=15)
+
+        # State for capture
+        capture_var = tk.BooleanVar(value=False)
+        captured_count_var = tk.IntVar(value=0)
+
+        # Start capture button
+        def toggle_capture():
+            if not self.camera_ok:
+                messagebox.showerror("Error", "Camera not available")
+                return
+            capture_var.set(not capture_var.get())
+            btn_text = "⏸ STOP CAPTURE" if capture_var.get() else "▶ START CAPTURE"
+            start_btn.config(text=btn_text, bg=RED if capture_var.get() else GREEN)
+            status_lbl.config(text="Status: Capturing..." if capture_var.get() else "Status: Ready")
+
+        start_btn = tk.Button(right, text="▶ START CAPTURE", command=toggle_capture,
+                             bg=GREEN, fg="#FFFFFF", font=("Arial", 11, "bold"),
+                             relief=tk.FLAT, bd=0, padx=20, pady=12)
+        start_btn.pack(fill=tk.X, padx=15, pady=(0, 15))
+        add_hover_effect(start_btn, GREEN, "#3E7C3F", "#FFFFFF")
+
+        # Status label
+        status_lbl = tk.Label(right, text="Status: Ready", bg=PANEL, fg=TEXT2, font=("Arial", 9), wraplength=240)
+        status_lbl.pack(anchor=tk.W, padx=15, pady=(0, 20))
+
+        # Captured count
+        count_lbl = tk.Label(right, text="Captured: 0", bg=PANEL, fg=ACCENT, font=("Arial", 10, "bold"))
+        count_lbl.pack(anchor=tk.W, padx=15)
+
+        # Camera display update loop
+        last_capture_time = [0]
+        capture_interval = 3  # seconds
+
+        def display_camera_frame():
+            """Display camera frame on canvas and capture every 3 seconds"""
+            if not self.camera_ok or self.current_frame is None:
+                self.content_container.after(10, display_camera_frame)
+                return
+
+            try:
+                # Use the persistent current_frame from the main loop
+                frame_cv = self.current_frame.copy()
+
+                # Resize frame to fit canvas
+                frame_cv = cv2.resize(frame_cv, (700, 600))
+
+                # Convert BGR to RGB for display
+                frame_rgb = cv2.cvtColor(frame_cv, cv2.COLOR_BGR2RGB)
+                img_pil = Image.fromarray(frame_rgb)
+                photo = ImageTk.PhotoImage(img_pil)
+
+                # Display on canvas
+                camera_canvas.create_image(0, 0, image=photo, anchor=tk.NW)
+                camera_canvas.image = photo  # Keep reference
+
+                # Update zoom display from SDK
+                try:
+                    zoom, mpp = self.pixel_measure.get_values()
+                    if zoom:
+                        zoom_var.set(f"{zoom:.2f}x")
+                except:
+                    pass
+
+                # Auto-capture every 3 seconds if enabled
+                current_time = time.time()
+                if capture_var.get() and (current_time - last_capture_time[0]) >= capture_interval:
+                    last_capture_time[0] = current_time
+                    captured_count_var.set(captured_count_var.get() + 1)
+                    count_lbl.config(text=f"Captured: {captured_count_var.get()}")
+                    # TODO: Save to database
+                    try:
+                        zoom_val, mpp_val = self.pixel_measure.get_values()
+                        print(f"Captured image #{captured_count_var.get()} - State: {state_var.get()}, Zoom: {zoom_val:.2f}x")
+                    except:
+                        print(f"Captured image #{captured_count_var.get()} - State: {state_var.get()}")
+
+            except Exception as e:
+                print(f"Display error: {str(e)}")
+
+            # Schedule next display update (10ms)
+            self.content_container.after(10, display_camera_frame)
+
+        # Start the display update loop
+        display_camera_frame()
+
+    def _show_state_captures_page(self):
+        """Display table of captured state cable images"""
+        frame = tk.Frame(self.content_container, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text="STATE CAPTURES", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        # Table header
+        header = tk.Frame(frame, bg=PANEL)
+        header.pack(fill=tk.X, pady=(0, 10))
+
+        cols = [("NAME", 15), ("DATE", 18), ("VIEW", 8), ("STATE", 15), ("ZOOM", 8), ("ACTION", 20)]
+        for col_name, width in cols:
+            tk.Label(header, text=col_name, bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold"), width=width, anchor="w").pack(side=tk.LEFT, padx=10, pady=10)
+
+        # Scrollable table content
+        table_container = tk.Frame(frame, bg=BG)
+        table_container.pack(fill=tk.BOTH, expand=True)
+
+        scrollbar = tk.Scrollbar(table_container, bg=BORDER)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        table_frame = tk.Frame(table_container, bg=BG)
+        table_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        canvas_scroll = tk.Canvas(table_frame, bg=BG, highlightthickness=0, yscrollcommand=scrollbar.set)
+        canvas_scroll.pack(fill=tk.BOTH, expand=True)
+        scrollbar.config(command=canvas_scroll.yview)
+
+        rows_frame = tk.Frame(canvas_scroll, bg=BG)
+        canvas_scroll.create_window((0, 0), window=rows_frame, anchor="nw")
+
+        # Sample data (would be loaded from API in production)
+        sample_captures = [
+            {"id": "cap_001", "date": "2026-06-08", "state": "correct cable", "zoom": "1.5x"},
+            {"id": "cap_002", "date": "2026-06-08", "state": "bad cable", "zoom": "2.0x"},
+            {"id": "cap_003", "date": "2026-06-08", "state": "empty", "zoom": "1.0x"},
+        ]
+
+        # Populate table rows
+        if sample_captures:
+            for capture in sample_captures:
+                row = tk.Frame(rows_frame, bg=CARD, relief=tk.FLAT, bd=1)
+                row.pack(fill=tk.X, pady=5)
+
+                name = capture.get('id', 'N/A')
+                date_str = capture.get('date', 'N/A')
+                state = capture.get('state', 'empty')
+                zoom = capture.get('zoom', '1.0x')
+                state_color = GREEN if state == "correct cable" else RED if state == "bad cable" else AMBER
+
+                # Columns
+                tk.Label(row, text=name, bg=CARD, fg=TEXT, font=("Arial", 9), width=15, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+                tk.Label(row, text=date_str, bg=CARD, fg=TEXT, font=("Arial", 9), width=18, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+                # View button
+                view_btn = tk.Button(row, text="VIEW", command=lambda c=capture: messagebox.showinfo("View", f"Image: {c['id']}"),
+                                    bg=ACCENT, fg="#FFFFFF", font=("Arial", 9, "bold"),
+                                    relief=tk.FLAT, bd=0, padx=8, pady=4)
+                view_btn.pack(side=tk.LEFT, padx=10, pady=8)
+                add_hover_effect(view_btn, ACCENT, "#8B0F15", "#FFFFFF")
+
+                # State label
+                state_lbl = tk.Label(row, text=state.upper(), bg=state_color, fg="#FFFFFF", font=("Arial", 8, "bold"), width=15, anchor="center")
+                state_lbl.pack(side=tk.LEFT, padx=10, pady=8)
+
+                # Zoom level
+                tk.Label(row, text=zoom, bg=CARD, fg=TEXT, font=("Arial", 9), width=8, anchor="center").pack(side=tk.LEFT, padx=10, pady=8)
+
+                # Action buttons frame
+                action_frame = tk.Frame(row, bg=CARD)
+                action_frame.pack(side=tk.RIGHT, padx=10, pady=8)
+
+                accept_btn = tk.Button(action_frame, text="✓ ACCEPT", command=lambda c=capture: messagebox.showinfo("Accept", f"Accepted {c['id']}"),
+                                      bg=GREEN, fg="#FFFFFF", font=("Arial", 8, "bold"),
+                                      relief=tk.FLAT, bd=0, padx=10, pady=4)
+                accept_btn.pack(side=tk.LEFT, padx=3)
+                add_hover_effect(accept_btn, GREEN, "#3E7C3F", "#FFFFFF")
+
+                refuse_btn = tk.Button(action_frame, text="✗ REFUSE", command=lambda c=capture: messagebox.showinfo("Refuse", f"Refused {c['id']}"),
+                                      bg=RED, fg="#FFFFFF", font=("Arial", 8, "bold"),
+                                      relief=tk.FLAT, bd=0, padx=10, pady=4)
+                refuse_btn.pack(side=tk.LEFT, padx=3)
+                add_hover_effect(refuse_btn, RED, "#8B0F15", "#FFFFFF")
+        else:
+            tk.Label(rows_frame, text="No captured state cables yet", bg=BG, fg=TEXT2, font=("Arial", 11)).pack(pady=20)
+
+        rows_frame.update_idletasks()
+        canvas_scroll.config(scrollregion=canvas_scroll.bbox("all"))
+
+    def _show_notification_page(self):
+        """Display the notifications page"""
+        frame = tk.Frame(self.content_container, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text="NOTIFICATIONS", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
+        tk.Label(frame, text="View system notifications and alerts", bg=BG, fg=TEXT2, font=("Arial", 11)).pack(anchor=tk.W, pady=(0, 30))
+
+        # Placeholder content
+        info_frame = tk.Frame(frame, bg=PANEL, relief=tk.FLAT, bd=1)
+        info_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(info_frame, text="🔔 Recent Notifications", bg=PANEL, fg=TEXT, font=("Arial", 12, "bold")).pack(anchor=tk.W, padx=15, pady=(15, 10))
+        tk.Label(info_frame, text="No notifications at this time.",
+                bg=PANEL, fg=TEXT2, font=("Arial", 10)).pack(anchor=tk.W, padx=15, pady=(0, 15))
+
+    def _show_reclamation_page(self):
+        """Display the reclamations form"""
+        frame = tk.Frame(self.content_container, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text="RECLAMATIONS", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 10))
+        tk.Label(frame, text="Report issues and problems", bg=BG, fg=TEXT2, font=("Arial", 11)).pack(anchor=tk.W, pady=(0, 20))
+
+        # Form container
+        form_frame = tk.Frame(frame, bg=PANEL, relief=tk.FLAT, bd=1)
+        form_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Subject field
+        tk.Label(form_frame, text="SUBJECT", bg=PANEL, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, padx=15, pady=(15, 8))
+        subject_entry = tk.Entry(form_frame, font=("Arial", 10), bg=BG, fg=TEXT,
+                                insertbackground=ACCENT, relief=tk.FLAT, bd=0,
+                                highlightthickness=2, highlightbackground=BORDER, highlightcolor=ACCENT)
+        subject_entry.pack(fill=tk.X, padx=15, pady=(0, 15), ipady=8)
+
+        # Problem type dropdown
+        tk.Label(form_frame, text="TYPE OF PROBLEM", bg=PANEL, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 8))
+        problem_type_var = tk.StringVar(value="-- Select Problem Type --")
+        problem_types = ["-- Select Problem Type --", "Cable Measurement Error", "Image Quality", "System Crash", "Performance Issue", "Other"]
+        problem_type_menu = tk.OptionMenu(form_frame, problem_type_var, *problem_types)
+        problem_type_menu.config(bg=BG, fg=TEXT, font=("Arial", 10), relief=tk.FLAT, bd=0,
+                                activebackground=BORDER, activeforeground=ACCENT, highlightthickness=0)
+        problem_type_menu.pack(fill=tk.X, padx=15, pady=(0, 15), ipady=6)
+
+        # Problem description
+        tk.Label(form_frame, text="PROBLEM DESCRIPTION", bg=PANEL, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 8))
+        problem_text = tk.Text(form_frame, font=("Arial", 10), bg=BG, fg=TEXT, insertbackground=ACCENT,
+                              relief=tk.FLAT, bd=0, highlightthickness=2, highlightbackground=BORDER,
+                              height=8, wrap=tk.WORD)
+        problem_text.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 20), ipady=8)
+
+        # Submit button
+        def submit_reclamation():
+            subject = subject_entry.get().strip()
+            problem_type = problem_type_var.get()
+            problem = problem_text.get("1.0", tk.END).strip()
+
+            if not subject:
+                messagebox.showwarning("Validation", "Please enter a subject")
+                return
+            if problem_type == "-- Select Problem Type --":
+                messagebox.showwarning("Validation", "Please select a problem type")
+                return
+            if not problem:
+                messagebox.showwarning("Validation", "Please describe the problem")
+                return
+
+            try:
+                payload = {
+                    "subject": subject,
+                    "problem_type": problem_type,
+                    "description": problem,
+                    "user_id": self.user_id,
+                    "created_at": datetime.now().isoformat()
+                }
+                self.api_client.post("/admin/reclamations", payload)
+                messagebox.showinfo("Success", "Reclamation submitted successfully")
+                subject_entry.delete(0, tk.END)
+                problem_text.delete("1.0", tk.END)
+                problem_type_var.set("-- Select Problem Type --")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to submit reclamation: {str(e)}")
+
+        btn_frame = tk.Frame(form_frame, bg=PANEL)
+        btn_frame.pack(fill=tk.X, padx=15, pady=(0, 15))
+
+        submit_btn = tk.Button(btn_frame, text="✓ SUBMIT", command=submit_reclamation,
+                              bg=GREEN, fg="#FFFFFF", font=("Arial", 11, "bold"),
+                              relief=tk.FLAT, bd=0, padx=30, pady=10)
+        submit_btn.pack(side=tk.LEFT)
+        add_hover_effect(submit_btn, GREEN, "#3E7C3F", "#FFFFFF")
 
     def _on_closing(self):
+        self._loop_running = False
+        if self.cap:
+            self.cap.release()
         self.root.destroy()
 
     def run(self):
