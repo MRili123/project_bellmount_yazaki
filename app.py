@@ -2602,8 +2602,11 @@ class AdminApp:
                 row = tk.Frame(scrollable_frame, bg=row_bg)
                 row.pack(fill=tk.X)
 
-                tk.Label(row, text=capture.get('annoteur_id', 'Unknown')[:16], bg=row_bg, fg=TEXT, font=("Arial", 10), width=16, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
-                tk.Label(row, text=capture.get('created_at', '')[:14], bg=row_bg, fg=TEXT, font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+                annoteur_id = (capture.get('annoteur_id') or 'Unknown')[:16]
+                tk.Label(row, text=annoteur_id, bg=row_bg, fg=TEXT, font=("Arial", 10), width=16, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+                created_at = (capture.get('created_at') or '')[:14]
+                tk.Label(row, text=created_at, bg=row_bg, fg=TEXT, font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
                 expected = capture.get('expected_diameter_mm') or 0
                 actual = capture.get('measured_distance_mm', 0)
                 measure_text = f"{expected:.2f} / {actual:.2f}mm"
