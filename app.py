@@ -4498,7 +4498,8 @@ class AnnoteurInteractiveApp:
         canvas_scroll.create_window((0, 0), window=rows_frame, anchor="nw")
 
         try:
-            response = self.api_client.get("/admin/captures?status=pending")
+            # Get all captures (both pending and approved for review)
+            response = self.api_client.get("/admin/captures")
             captures = response if isinstance(response, list) else []
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load captures: {str(e)}")
