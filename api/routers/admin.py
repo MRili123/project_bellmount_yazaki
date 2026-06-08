@@ -190,7 +190,18 @@ def create_switch(body: SwitchCreate, db: Session = Depends(get_db)):
     db.add(switch)
     db.commit()
     db.refresh(switch)
-    return switch
+
+    return SwitchResponse(
+        id=switch.id,
+        machine_id=switch.machine_id,
+        machine_name=machine.machine_name,
+        switch_name=switch.switch_name,
+        expected_diameter_mm=switch.expected_diameter_mm,
+        tolerance_min=switch.tolerance_min,
+        tolerance_max=switch.tolerance_max,
+        cable_type=switch.cable_type,
+        created_at=switch.created_at
+    )
 
 @router.put("/switches/{switch_id}", response_model=SwitchResponse)
 def update_switch(switch_id: str, body: SwitchUpdate, db: Session = Depends(get_db)):
@@ -212,7 +223,22 @@ def update_switch(switch_id: str, body: SwitchUpdate, db: Session = Depends(get_
 
     db.commit()
     db.refresh(switch)
-    return switch
+
+    # Get machine name for response
+    machine = db.query(Machine).filter(Machine.id == switch.machine_id).first()
+    machine_name = machine.machine_name if machine else "Unknown"
+
+    return SwitchResponse(
+        id=switch.id,
+        machine_id=switch.machine_id,
+        machine_name=machine_name,
+        switch_name=switch.switch_name,
+        expected_diameter_mm=switch.expected_diameter_mm,
+        tolerance_min=switch.tolerance_min,
+        tolerance_max=switch.tolerance_max,
+        cable_type=switch.cable_type,
+        created_at=switch.created_at
+    )
 
 @router.delete("/switches/{switch_id}")
 def delete_switch(switch_id: str, db: Session = Depends(get_db)):
