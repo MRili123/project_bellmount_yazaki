@@ -41,12 +41,27 @@ def classify_error(exception, response=None):
         return "unknown"
 
 class APIClient:
-    def __init__(self, api_url: str):
+    def __init__(self, api_url: str, api_key: str = None):
         self.api_url = api_url.rstrip('/')
-        self.access_token = None
+        self.api_key = api_key  # For API key authentication
+        self.access_token = None  # For session token
         self.role = None
         self.user_id = None
         self.username = None
+
+    def _get_headers(self) -> Dict[str, str]:
+        """Get headers with API key and/or auth token"""
+        headers = {"Content-Type": "application/json"}
+
+        # Add API key if available
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+
+        # Add auth token if logged in
+        if self.access_token:
+            headers["Authorization"] = f"Bearer {self.access_token}"
+
+        return headers
 
     def login(self, username: str, password: str) -> Dict[str, Any]:
         """Login with username and password."""
@@ -54,6 +69,7 @@ class APIClient:
             response = requests.post(
                 f"{self.api_url}/auth/login",
                 json={"username": username, "password": password},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -91,7 +107,7 @@ class APIClient:
     def health_check(self) -> Dict[str, Any]:
         """Check if API is running. Returns {"ok": bool, "error_type": str, "error": str}"""
         try:
-            response = requests.get(f"{self.api_url}/auth/health", timeout=3)
+            response = requests.get(f"{self.api_url}/auth/health", headers=self._get_headers(), timeout=3)
             if response.status_code == 200:
                 return {"ok": True}
             else:
@@ -134,7 +150,7 @@ class APIClient:
             response = requests.get(
                 url,
                 params=params,
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -174,7 +190,7 @@ class APIClient:
         try:
             response = requests.get(
                 f"{self.api_url}/switches/{switch_id}",
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -225,7 +241,7 @@ class APIClient:
                     f"{self.api_url}/captures/upload",
                     data=data,
                     files=files,
-                    headers={"Authorization": f"Bearer {self.access_token}"},
+                    headers=self._get_headers(),
                     timeout=15
                 )
 
@@ -275,7 +291,7 @@ class APIClient:
             response = requests.get(
                 f"{self.api_url}/captures/queue",
                 params={"annoteur_id": annoteur_id},
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -290,7 +306,7 @@ class APIClient:
         try:
             response = requests.put(
                 f"{self.api_url}/captures/{capture_id}/approve",
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             return response.json()
@@ -303,7 +319,7 @@ class APIClient:
             response = requests.put(
                 f"{self.api_url}/captures/{capture_id}/reject",
                 params={"reason": reason},
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             return response.json()
@@ -315,7 +331,7 @@ class APIClient:
         try:
             response = requests.delete(
                 f"{self.api_url}/captures/{capture_id}",
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             return response.json()
@@ -333,7 +349,7 @@ class APIClient:
             response = requests.get(
                 f"{self.api_url}/admin/users",
                 params=params,
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -355,7 +371,7 @@ class APIClient:
             response = requests.post(
                 f"{self.api_url}/admin/users",
                 json=data,
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -377,7 +393,7 @@ class APIClient:
             response = requests.put(
                 f"{self.api_url}/admin/users/{user_id}",
                 json=data,
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -397,7 +413,7 @@ class APIClient:
         try:
             response = requests.delete(
                 f"{self.api_url}/admin/users/{user_id}",
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -417,7 +433,7 @@ class APIClient:
         try:
             response = requests.get(
                 f"{self.api_url}/admin/machines",
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -439,7 +455,7 @@ class APIClient:
             response = requests.post(
                 f"{self.api_url}/admin/machines",
                 json=data,
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -461,7 +477,7 @@ class APIClient:
             response = requests.put(
                 f"{self.api_url}/admin/machines/{machine_id}",
                 json=data,
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -481,7 +497,7 @@ class APIClient:
         try:
             response = requests.delete(
                 f"{self.api_url}/admin/machines/{machine_id}",
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -505,7 +521,7 @@ class APIClient:
             response = requests.get(
                 f"{self.api_url}/admin/switches",
                 params=params,
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -534,7 +550,7 @@ class APIClient:
             response = requests.post(
                 f"{self.api_url}/admin/switches",
                 json=data,
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -556,7 +572,7 @@ class APIClient:
             response = requests.put(
                 f"{self.api_url}/admin/switches/{switch_id}",
                 json=data,
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -576,7 +592,7 @@ class APIClient:
         try:
             response = requests.delete(
                 f"{self.api_url}/admin/switches/{switch_id}",
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -600,7 +616,7 @@ class APIClient:
             response = requests.get(
                 f"{self.api_url}/admin/captures",
                 params=params,
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -622,7 +638,7 @@ class APIClient:
             response = requests.put(
                 f"{self.api_url}/admin/captures/{capture_id}/assign",
                 json=data,
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -642,7 +658,7 @@ class APIClient:
         try:
             response = requests.put(
                 f"{self.api_url}/admin/captures/{capture_id}/approve",
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -662,7 +678,7 @@ class APIClient:
         try:
             response = requests.get(
                 f"{self.api_url}/notifications/",
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -686,7 +702,7 @@ class APIClient:
             response = requests.get(
                 url,
                 params=params,
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code == 200:
@@ -703,7 +719,7 @@ class APIClient:
             response = requests.put(
                 url,
                 json=data,
-                headers={"Authorization": f"Bearer {self.access_token}"},
+                headers=self._get_headers(),
                 timeout=5
             )
             if response.status_code in [200, 201]:

@@ -162,6 +162,7 @@ class CaptureAdminResponse(BaseModel):
     delta_mm: float
     annoteur_approved: bool
     quality_score: Optional[float]
+    model_type: Optional[str] = "mesure"
     created_at: datetime
 
     class Config:
