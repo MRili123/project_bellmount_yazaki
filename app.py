@@ -4666,14 +4666,23 @@ class AnnoteurInteractiveApp:
         # Camera display update loop
         last_capture_time = [0]
         capture_interval = 3  # seconds
+        display_loop_id = [None]  # Track loop ID for cleanup
 
         def display_camera_frame():
             """Display camera frame on canvas and capture every 3 seconds"""
+            # Check if we're still on STATE CABLE page
+            if self.current_page != "statecable":
+                return
+
             if not self.camera_ok or self.current_frame is None:
-                self.content_container.after(10, display_camera_frame)
+                display_loop_id[0] = self.content_container.after(10, display_camera_frame)
                 return
 
             try:
+                # Check if canvas widget still exists
+                if not camera_canvas.winfo_exists():
+                    return
+
                 # Use the persistent current_frame from the main loop
                 frame_cv = self.current_frame.copy()
 
@@ -4711,10 +4720,10 @@ class AnnoteurInteractiveApp:
                         print(f"Captured image #{captured_count_var.get()} - State: {state_var.get()}")
 
             except Exception as e:
-                print(f"Display error: {str(e)}")
+                pass  # Silently ignore errors when navigating away
 
             # Schedule next display update (10ms)
-            self.content_container.after(10, display_camera_frame)
+            display_loop_id[0] = self.content_container.after(10, display_camera_frame)
 
         # Start the display update loop
         display_camera_frame()
