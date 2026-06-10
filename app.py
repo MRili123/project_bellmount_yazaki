@@ -2527,8 +2527,9 @@ class AdminApp:
         tab_frame.pack(fill=tk.X, pady=(0, 20))
 
         cached = self.cache.get("captures")
-        mesure_count = len([c for c in cached if c.get("annoteur_approved") and c.get("model_type") == "mesure"]) if cached else 0
-        state_count = len([c for c in cached if c.get("annoteur_approved") and c.get("model_type") == "state"]) if cached else 0
+        # Show all approved captures in MESURE (model_type field removed from schema)
+        mesure_count = len([c for c in cached if c.get("annoteur_approved")]) if cached else 0
+        state_count = 0  # STATE annotations managed separately
 
         tab_state = {"current": "mesure"}
 
@@ -2563,8 +2564,9 @@ class AdminApp:
         state_btn.configure(command=lambda: switch_tab("state"))
 
         # Build tables for each model
-        mesure_captures = [c for c in cached if c.get("annoteur_approved") and c.get("model_type") == "mesure"] if cached else []
-        state_captures = [c for c in cached if c.get("annoteur_approved") and c.get("model_type") == "state"] if cached else []
+        # Show all approved captures in MESURE (model_type field removed from schema)
+        mesure_captures = [c for c in cached if c.get("annoteur_approved")] if cached else []
+        state_captures = []  # STATE annotations managed separately
 
         self._build_dataset_table(mesure_frame, mesure_captures)
         self._build_dataset_table(state_frame, state_captures)
