@@ -2571,7 +2571,7 @@ class AdminApp:
         self._build_dataset_table(mesure_frame, mesure_captures)
         self._build_dataset_table(state_frame, state_captures)
 
-        self._sync_dataset(mesure_frame, state_frame, cached, tab_state)
+        self._sync_dataset(mesure_frame, state_frame, mesure_btn, state_btn, cached, tab_state)
 
     def _build_dataset_table(self, frame, captures):
         table_frame = tk.Frame(frame, bg=BORDER, relief=tk.SUNKEN, bd=1)
@@ -2642,7 +2642,7 @@ class AdminApp:
         canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
 
-    def _sync_dataset(self, mesure_frame, state_frame, cached, tab_state):
+    def _sync_dataset(self, mesure_frame, state_frame, mesure_btn, state_btn, cached, tab_state):
         if not self.cache.is_stale("captures"):
             return
         def do_sync():
@@ -2662,6 +2662,12 @@ class AdminApp:
                     # Show all approved captures in MESURE (model_type field removed from schema)
                     mesure_captures = [c for c in merged if c.get("annoteur_approved")]
                     state_captures = []  # STATE annotations managed separately
+
+                    # Update button counts
+                    mesure_count = len(mesure_captures)
+                    state_count = len(state_captures)
+                    mesure_btn.configure(text=f"MESURE ({mesure_count})")
+                    state_btn.configure(text=f"STATE ({state_count})")
 
                     self._build_dataset_table(mesure_frame, mesure_captures)
                     self._build_dataset_table(state_frame, state_captures)
