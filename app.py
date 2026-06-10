@@ -2659,8 +2659,9 @@ class AdminApp:
                         if getattr(w, '_is_table', False):
                             w.destroy()
 
-                    mesure_captures = [c for c in merged if c.get("annoteur_approved") and c.get("model_type") == "mesure"]
-                    state_captures = [c for c in merged if c.get("annoteur_approved") and c.get("model_type") == "state"]
+                    # Show all approved captures in MESURE (model_type field removed from schema)
+                    mesure_captures = [c for c in merged if c.get("annoteur_approved")]
+                    state_captures = []  # STATE annotations managed separately
 
                     self._build_dataset_table(mesure_frame, mesure_captures)
                     self._build_dataset_table(state_frame, state_captures)
