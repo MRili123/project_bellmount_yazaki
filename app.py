@@ -2234,8 +2234,12 @@ class AdminApp:
                 row = tk.Frame(scrollable_frame, bg=row_bg)
                 row.pack(fill=tk.X)
 
-                tk.Label(row, text=capture.get('annoteur_id', 'Unknown')[:16], bg=row_bg, fg=TEXT, font=("Arial", 10), width=16, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
-                tk.Label(row, text=capture.get('created_at', '')[:14], bg=row_bg, fg=TEXT, font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+                annoteur_id = (capture.get('annoteur_id') or 'Unknown')[:16]
+                tk.Label(row, text=annoteur_id, bg=row_bg, fg=TEXT, font=("Arial", 10), width=16, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+                created_at = (capture.get('created_at') or '')[:14]
+                tk.Label(row, text=created_at, bg=row_bg, fg=TEXT, font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
                 expected = capture.get('expected_diameter_mm') or 0
                 actual = capture.get('measured_distance_mm', 0)
                 measure_text = f"{expected:.2f} / {actual:.2f}mm"
@@ -2718,17 +2722,17 @@ class AdminApp:
                 row = tk.Frame(scrollable_frame, bg=row_bg)
                 row.pack(fill=tk.X)
 
-                ntype = notif.get('notification_type', 'info')[:10].upper()
+                ntype = ((notif.get('notification_type') or 'info')[:10]).upper()
                 type_color = {"INFO": TEXT, "WARNING": AMBER, "ALERT": RED, "SUCCESS": GREEN}.get(ntype, TEXT)
                 tk.Label(row, text=ntype, bg=row_bg, fg=type_color, font=("Arial", 9, "bold"), width=10, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
 
-                username = notif.get('username', 'Unknown')[:15]
+                username = (notif.get('username') or 'Unknown')[:15]
                 tk.Label(row, text=username, bg=row_bg, fg=TEXT, font=("Arial", 10), width=15, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
 
-                title = notif.get('title', '')[:18]
+                title = (notif.get('title') or '')[:18]
                 tk.Label(row, text=title, bg=row_bg, fg=TEXT, font=("Arial", 10), width=18, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
 
-                date = notif.get('created_at', '')[:14]
+                date = (notif.get('created_at') or '')[:14]
                 tk.Label(row, text=date, bg=row_bg, fg=TEXT, font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
 
                 read_status = "READ" if notif.get('read') else "NEW"
@@ -2790,7 +2794,8 @@ class AdminApp:
         meta_frame = tk.Frame(frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
         meta_frame.pack(fill=tk.X, pady=(0, 15))
 
-        meta_text = f"From: {notification.get('username', 'Unknown')}  |  Date: {notification.get('created_at', '')[:19]}"
+        created_at_str = (notification.get('created_at') or '')[:19]
+        meta_text = f"From: {notification.get('username', 'Unknown')}  |  Date: {created_at_str}"
         tk.Label(meta_frame, text=meta_text, bg=PANEL, fg=TEXT2, font=("Arial", 9)).pack(anchor=tk.W, padx=10, pady=8)
 
         # Message section
@@ -3812,8 +3817,10 @@ class AnnoteurApp:
         p2_y = capture.get('p2_y', 0)
         px_dist = ((p2_x - p1_x)**2 + (p2_y - p1_y)**2)**0.5
 
-        info_text = f"""Machine: {capture.get('machine_id', 'N/A')[:8]}...
-Switch: {capture.get('switch_id', 'N/A')[:8]}...
+        machine_id = ((capture.get('machine_id') or 'N/A')[:8]) if capture.get('machine_id') else 'N/A'
+        switch_id = ((capture.get('switch_id') or 'N/A')[:8]) if capture.get('switch_id') else 'N/A'
+        info_text = f"""Machine: {machine_id}...
+Switch: {switch_id}...
 Measured: {capture.get('measured_distance_mm', 'N/A')} mm
 Status: {capture.get('measurement_status', 'N/A')}
 
@@ -4512,7 +4519,7 @@ class AnnoteurInteractiveApp:
                 row.pack(fill=tk.X, pady=5)
 
                 machine = capture.get('machine_name', 'N/A')
-                date_str = capture.get('created_at', 'N/A')[:10]
+                date_str = ((capture.get('created_at') or 'N/A')[:10]) if capture.get('created_at') else 'N/A'
                 switch = capture.get('switch_name', 'N/A')
                 state = capture.get('cable_state', 'PENDING')
                 state_color = GREEN if state == "cable_good" else AMBER if state == "cable_male" else RED
