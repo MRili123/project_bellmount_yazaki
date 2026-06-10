@@ -633,7 +633,7 @@ class MainApp:
         switches = self._fetch_switches()
 
         # Check if there was an API error
-        if not switches and hasattr(self, 'last_api_error'):
+        if not switches and hasattr(self, 'last_api_error') and self.last_api_error:
             error = self.last_api_error
             error_type = error.get("error_type", "unknown")
             message = error.get("error", "Failed to load switches")
