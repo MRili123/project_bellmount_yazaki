@@ -2606,6 +2606,7 @@ class AdminApp:
             for i, capture in enumerate(captures):
                 row_bg = PANEL if i % 2 == 0 else BG
                 row = tk.Frame(scrollable_frame, bg=row_bg)
+                row._capture_id = capture.get("id")  # Store ID for deletion
                 row.pack(fill=tk.X)
 
                 annoteur_id = (capture.get('annoteur_id') or 'Unknown')[:16]
@@ -2675,13 +2676,39 @@ class AdminApp:
 
     def _delete_dataset_capture(self, capture_id):
         if messagebox.askyesno("Confirm", "Delete this capture from dataset?"):
-            result = self.api_client.delete_capture(capture_id)
-            if result.get("ok"):
-                self.cache.invalidate("captures")
-                self._switch_page("dataset", self._show_dataset_page)
-                messagebox.showinfo("Success", "Capture deleted!")
-            else:
-                messagebox.showerror("Error", result.get("error", "Failed to delete capture"))
+            def do_delete():
+                result = self.api_client.delete_capture(capture_id)
+                self.root.after(0, lambda: self._handle_delete_result(capture_id, result))
+
+            # Run delete in background thread
+            import threading
+            thread = threading.Thread(target=do_delete, daemon=True)
+            thread.start()
+
+    def _handle_delete_result(self, capture_id, result):
+        """Handle delete result - update cache and UI without full page reload"""
+        if result.get("ok"):
+            # Update cache: remove deleted capture
+            cached = self.cache.get("captures")
+            if cached:
+                updated = [c for c in cached if c.get("id") != capture_id]
+                self.cache.update("captures", updated)
+
+            # Find and remove the row from current display
+            # Look for a table widget with this capture's data
+            for widget in self.content_container.winfo_children():
+                for child in widget.winfo_children():
+                    if hasattr(child, 'winfo_children'):
+                        for row in child.winfo_children():
+                            if hasattr(row, '_capture_id') and row._capture_id == capture_id:
+                                row.destroy()
+                                messagebox.showinfo("Success", "Capture deleted!")
+                                return
+
+            # If row not found in display, just show success
+            messagebox.showinfo("Success", "Capture deleted!")
+        else:
+            messagebox.showerror("Error", result.get("error", "Failed to delete capture"))
 
     def _show_notifications_page(self):
         frame = tk.Frame(self.content_container, bg=BG)

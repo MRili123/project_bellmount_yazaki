@@ -121,17 +121,34 @@ def reject_capture(capture_id: str, reason: str = None, db: Session = Depends(ge
 
 @router.delete("/{capture_id}")
 def delete_capture(capture_id: str, db: Session = Depends(get_db)):
+    import threading
+
     capture = db.query(Capture).filter(Capture.id == capture_id).first()
     if not capture:
         raise HTTPException(status_code=404, detail="Capture not found")
 
-    # Delete image files
-    if os.path.exists(capture.image_original_path):
-        os.remove(capture.image_original_path)
-    if os.path.exists(capture.image_thresholded_path):
-        os.remove(capture.image_thresholded_path)
+    # Store file paths before deleting from DB
+    orig_path = capture.image_original_path
+    thresh_path = capture.image_thresholded_path
 
+    # Delete from database immediately
     db.delete(capture)
     db.commit()
+
+    # Delete image files in background (don't block response)
+    def delete_files():
+        if os.path.exists(orig_path):
+            try:
+                os.remove(orig_path)
+            except:
+                pass
+        if os.path.exists(thresh_path):
+            try:
+                os.remove(thresh_path)
+            except:
+                pass
+
+    thread = threading.Thread(target=delete_files, daemon=True)
+    thread.start()
 
     return {"ok": True, "message": "Capture deleted successfully", "capture_id": capture_id}
