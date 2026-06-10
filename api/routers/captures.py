@@ -134,4 +134,4 @@ def delete_capture(capture_id: str, db: Session = Depends(get_db)):
     db.delete(capture)
     db.commit()
 
-    return {"status": "deleted", "capture_id": capture_id}
+    return {"ok": True, "message": "Capture deleted successfully", "capture_id": capture_id}
