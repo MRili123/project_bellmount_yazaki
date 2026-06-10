@@ -5,7 +5,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./bellmounth.db")
+import pathlib
+project_root = pathlib.Path(__file__).parent.parent
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{project_root}/bellmounth.db")
 
 if DATABASE_URL.startswith("sqlite"):
     engine = create_engine(

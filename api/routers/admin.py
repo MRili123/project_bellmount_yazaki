@@ -253,10 +253,12 @@ def delete_switch(switch_id: str, db: Session = Depends(get_db)):
 
 # ==================== CAPTURES ====================
 
-@router.get("/captures", response_model=List[CaptureAdminResponse])
+@router.get("/captures")
 def get_captures(status: Optional[str] = Query(None), db: Session = Depends(get_db)):
     """Get all captures, optionally filtered by status (pending|assigned|approved)"""
     from models import Switch
+    import json
+
     query = db.query(Capture, Switch.expected_diameter_mm).join(
         Switch, Capture.switch_id == Switch.id, isouter=True
     )
@@ -272,9 +274,11 @@ def get_captures(status: Optional[str] = Query(None), db: Session = Depends(get_
 
     results = []
     for capture, expected_mm in query.all():
-        capture_dict = capture.__dict__.copy()
+        capture_dict = {k: v for k, v in capture.__dict__.items() if not k.startswith('_sa_')}
         capture_dict['expected_diameter_mm'] = expected_mm
-        results.append(CaptureAdminResponse(**capture_dict))
+        response_obj = CaptureAdminResponse(**capture_dict)
+        results.append(json.loads(response_obj.json()))
+
     return results
 
 @router.put("/captures/{capture_id}/assign", response_model=CaptureAdminResponse)
