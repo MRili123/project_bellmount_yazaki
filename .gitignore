@@ -1,3 +1,7 @@
+# Model files (users create/download their own)
+models/mesure/*.h5
+models/state/*.h5
+
 # Screenshots and test images
 screenshot/
 screenshots/
