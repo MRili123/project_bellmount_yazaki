@@ -1808,6 +1808,7 @@ class AdminApp:
             ("REQUESTS", "requests", self._show_requests_page),
             ("DATASET", "dataset", self._show_dataset_page),
             ("MODEL", "model", self._show_model_page),
+            ("TRAINING", "training", self._show_training_page),
             ("NOTIFICATIONS", "notifications", self._show_notifications_page),
         ]
 
@@ -3440,6 +3441,48 @@ class AdminApp:
         send_btn.pack(side=tk.LEFT)
         add_hover_effect(send_btn, ACCENT, "#8B0F15", "#FFFFFF")
 
+    def _show_training_page(self):
+        """Display training status and progress"""
+        frame = tk.Frame(self.content_container, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Header
+        tk.Label(frame, text="◉  MODEL TRAINING", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        # Training info box
+        info_frame = tk.Frame(frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
+        info_frame.pack(fill=tk.X, pady=(0, 20))
+
+        info_text = """
+📊 TRAINING STATUS
+
+No active training session.
+
+To start training a model:
+1. Go to MODEL section
+2. Click CREATE & TRAIN button
+3. Select mesure or state model
+4. Confirm - training will start here
+
+⏱ Training typically takes 5-30 minutes depending on dataset size.
+        """
+
+        tk.Label(info_frame, text=info_text, bg=PANEL, fg=TEXT2, font=("Arial", 10), justify=tk.LEFT, wraplength=600).pack(anchor=tk.W, padx=20, pady=20)
+
+        # Progress placeholder
+        progress_frame = tk.Frame(frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
+        progress_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
+
+        tk.Label(progress_frame, text="No training in progress", bg=PANEL, fg=TEXT2, font=("Arial", 11)).pack(expand=True)
+
+        # Action buttons
+        btn_frame = tk.Frame(frame, bg=BG)
+        btn_frame.pack(fill=tk.X)
+
+        go_to_model = tk.Button(btn_frame, text="Go to MODEL Section", command=lambda: self._switch_page("model", self._show_model_page), bg=ACCENT, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=20, pady=10)
+        go_to_model.pack(side=tk.LEFT)
+        add_hover_effect(go_to_model, ACCENT, "#8B0F15", "#FFFFFF")
+
     def _create_model_dialog(self, model_type, dataset_count):
         """Dialog to create a new model"""
         dialog = tk.Toplevel(self.root)
@@ -3479,7 +3522,8 @@ class AdminApp:
             messagebox.showinfo("Model Training", f"Training {model_type} model with {dataset_count} samples...\n\nThis may take several minutes.")
             dialog.destroy()
             # TODO: Call backend to start training
-            messagebox.showinfo("Success", f"Model training request submitted.\n\nGo to model_bellmounth_mesure/model_app.py to monitor training progress.")
+            # Switch to TRAINING page to show progress
+            self._switch_page("training", self._show_training_page)
 
         create_btn = tk.Button(btn_frame, text="CREATE & TRAIN", command=confirm_create, bg=GREEN, fg="#FFFFFF", font=("Arial", 11, "bold"), relief=tk.FLAT, bd=0, padx=30, pady=15)
         create_btn.pack(side=tk.LEFT)
