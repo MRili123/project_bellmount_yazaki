@@ -3511,11 +3511,22 @@ To start training a model:
 
         # Action buttons
         btn_frame = tk.Frame(frame, bg=BG)
-        btn_frame.pack(fill=tk.X)
+        btn_frame.pack(fill=tk.X, pady=(10, 0))
+
+        cancel_btn = tk.Button(btn_frame, text="CANCEL TRAINING", command=self._cancel_training, bg=RED, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=20, pady=10)
+        cancel_btn.pack(side=tk.LEFT, padx=(0, 10))
+        add_hover_effect(cancel_btn, RED, "#8B0F15", "#FFFFFF")
 
         go_to_model = tk.Button(btn_frame, text="Go to MODEL Section", command=lambda: self._switch_page("model", self._show_model_page), bg=ACCENT, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=20, pady=10)
         go_to_model.pack(side=tk.LEFT)
         add_hover_effect(go_to_model, ACCENT, "#8B0F15", "#FFFFFF")
+
+    def _cancel_training(self):
+        """Cancel the ongoing training"""
+        if messagebox.askyesno("Cancel Training", "Are you sure you want to cancel the training?\n\nThis cannot be undone."):
+            # TODO: Call backend to stop training
+            messagebox.showinfo("Training Cancelled", "Training has been cancelled.\n\nGo back to MODEL section to start a new training.")
+            self._switch_page("model", self._show_model_page)
 
     def _create_model_dialog(self, model_type, dataset_count):
         """Dialog to create a new model"""
