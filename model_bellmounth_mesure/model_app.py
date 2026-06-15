@@ -2058,25 +2058,31 @@ class InferenceThread(QThread):
             gray = thresh.astype(np.float32) / 255.0
 
             # Load model (with caching) - use compile=False for Keras 3 compatibility
-            model_key = str(self.model_path)
-            if model_key not in InferenceThread._model_cache:
-                try:
-                    model = tf.keras.models.load_model(model_key, compile=False)
-                    InferenceThread._model_cache[model_key] = model
-                except Exception as e:
-                    self.error.emit(f"Model loading failed: {str(e)}\n\nTry retraining the model.")
-                    return
-            model = InferenceThread._model_cache[model_key]
+            # Model loading disabled - add model files to models/mesure/ folder to enable
+            # model_key = str(self.model_path)
+            # if model_key not in InferenceThread._model_cache:
+            #     try:
+            #         model = tf.keras.models.load_model(model_key, compile=False)
+            #         InferenceThread._model_cache[model_key] = model
+            #     except Exception as e:
+            #         self.error.emit(f"Model loading failed: {str(e)}\n\nTry retraining the model.")
+            #         return
+            # model = InferenceThread._model_cache[model_key]
+            #
+            # # Predict
+            # pred = model.predict(np.array([gray]), verbose=0)[0]  # [x1, y1, x2, y2] normalized
+            #
+            # # Convert to pixel coordinates
+            # p1_x, p1_y = int(pred[0] * self.img_size[0]), int(pred[1] * self.img_size[1])
+            # p2_x, p2_y = int(pred[2] * self.img_size[0]), int(pred[3] * self.img_size[1])
+            # p1 = (p1_x, p1_y)
+            # p2 = (p2_x, p2_y)
+            # distance = math.dist(p1, p2)
 
-            # Predict
-            pred = model.predict(np.array([gray]), verbose=0)[0]  # [x1, y1, x2, y2] normalized
-
-            # Convert to pixel coordinates
-            p1_x, p1_y = int(pred[0] * self.img_size[0]), int(pred[1] * self.img_size[1])
-            p2_x, p2_y = int(pred[2] * self.img_size[0]), int(pred[3] * self.img_size[1])
-            p1 = (p1_x, p1_y)
-            p2 = (p2_x, p2_y)
-            distance = math.dist(p1, p2)
+            # Return dummy values when model is disabled
+            p1 = (0, 0)
+            p2 = (0, 0)
+            distance = 0
 
             # Draw on thresholded image (same as what model saw)
             vis = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)

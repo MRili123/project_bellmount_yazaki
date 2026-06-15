@@ -1280,29 +1280,33 @@ class MainApp:
         if not _TF_AVAILABLE:
             return None
 
-        if self._tf_model is None:
-            try:
-                self._tf_model = tf.keras.models.load_model(str(MODEL_PATH), compile=False)
-            except:
-                return None
+        # Model loading commented out - add models to models/mesure/ folder to enable
+        # if self._tf_model is None:
+        #     try:
+        #         self._tf_model = tf.keras.models.load_model(str(MODEL_PATH), compile=False)
+        #     except:
+        #         return None
 
-        h, w = frame.shape[:2]
-        thresh = apply_threshold(frame)
-        resized = cv2.resize(thresh, (640, 480))
-        normalized = resized.astype(np.float32) / 255.0
-        inp = normalized[..., np.newaxis][np.newaxis, ...]
+        # Model inference disabled - uncomment when model files are available
+        # h, w = frame.shape[:2]
+        # thresh = apply_threshold(frame)
+        # resized = cv2.resize(thresh, (640, 480))
+        # normalized = resized.astype(np.float32) / 255.0
+        # inp = normalized[..., np.newaxis][np.newaxis, ...]
+        #
+        # pred = self._tf_model.predict(inp, verbose=0)[0]
+        # p1 = (int(pred[0] * w), int(pred[1] * h))
+        # # Use P1's Y coordinate for P2 (horizontal alignment)
+        # p2 = (int(pred[2] * w), p1[1])
+        # pixel_dist = math.dist(p1, p2)
+        #
+        # self.pixel_measure.update()
+        # _, mm_pp = self.pixel_measure.get_values()
+        # dist_mm = pixel_dist * mm_pp if mm_pp else None
+        #
+        # return p1, p2, dist_mm
 
-        pred = self._tf_model.predict(inp, verbose=0)[0]
-        p1 = (int(pred[0] * w), int(pred[1] * h))
-        # Use P1's Y coordinate for P2 (horizontal alignment)
-        p2 = (int(pred[2] * w), p1[1])
-        pixel_dist = math.dist(p1, p2)
-
-        self.pixel_measure.update()
-        _, mm_pp = self.pixel_measure.get_values()
-        dist_mm = pixel_dist * mm_pp if mm_pp else None
-
-        return p1, p2, dist_mm
+        return None
 
     def _compute_distance(self):
         if self.p1 and self.p2:
