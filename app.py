@@ -3502,12 +3502,65 @@ To start training a model:
         percent_label = tk.Label(progress_frame, text="0%", bg=PANEL, fg=TEXT, font=("Arial", 9, "bold"))
         percent_label.pack(anchor=tk.E, padx=10, pady=5)
 
-        # Status info
+        # Status info with time estimation
         status_frame = tk.Frame(frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
         status_frame.pack(fill=tk.X, pady=(0, 20), padx=5)
 
-        status_info = tk.Label(status_frame, text="Status: Waiting for training to start...", bg=PANEL, fg=TEXT2, font=("Arial", 9), justify=tk.LEFT)
-        status_info.pack(anchor=tk.W, padx=10, pady=10)
+        # Check if training is active
+        training_active = hasattr(self, 'current_training_samples') and self.current_training_samples > 0
+        model_name = getattr(self, 'current_training_model', 'unknown').upper() if training_active else ""
+        dataset_size = getattr(self, 'current_training_samples', 0) if training_active else 0
+
+        if training_active:
+            status_text = f"Status: Training {model_name} model with {dataset_size} samples..."
+        else:
+            status_text = "Status: Waiting for training to start..."
+
+        status_info = tk.Label(status_frame, text=status_text, bg=PANEL, fg=TEXT2, font=("Arial", 9), justify=tk.LEFT)
+        status_info.pack(anchor=tk.W, padx=10, pady=(10, 5))
+
+        # Time estimation
+        time_info = tk.Label(status_frame, text="", bg=PANEL, fg=TEXT2, font=("Arial", 9), justify=tk.LEFT)
+        time_info.pack(anchor=tk.W, padx=10, pady=(0, 10))
+
+        def calculate_training_time(dataset_size):
+            """Calculate estimated training time in minutes based on dataset size"""
+            # Estimation: ~2 minutes per 100 samples
+            estimated_minutes = (dataset_size / 100) * 2
+            return max(estimated_minutes, 5)  # Minimum 5 minutes
+
+        def format_time(minutes):
+            """Format minutes to HH:MM:SS format"""
+            total_seconds = int(minutes * 60)
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            seconds = total_seconds % 60
+            if hours > 0:
+                return f"{hours}h {minutes}m {seconds}s"
+            else:
+                return f"{minutes}m {seconds}s"
+
+        def update_time_display(dataset_size=0, elapsed_percent=0):
+            """Update time information display"""
+            if dataset_size > 0:
+                estimated_minutes = calculate_training_time(dataset_size)
+                estimated_time_str = format_time(estimated_minutes)
+                elapsed_minutes = (estimated_minutes * elapsed_percent) / 100
+                elapsed_time_str = format_time(elapsed_minutes)
+                remaining_minutes = estimated_minutes - elapsed_minutes
+                remaining_time_str = format_time(remaining_minutes)
+
+                time_text = f"⏱ Estimated: {estimated_time_str}  |  Elapsed: {elapsed_time_str}  |  Remaining: {remaining_time_str}"
+                time_info.config(text=time_text)
+            else:
+                time_info.config(text="")
+
+        # Show time estimation if training is active
+        if training_active and dataset_size > 0:
+            update_time_display(dataset_size, 0)
+
+        # Store reference for updates
+        self.training_time_updater = update_time_display
 
         # Action buttons
         btn_frame = tk.Frame(frame, bg=BG)
@@ -3566,6 +3619,9 @@ To start training a model:
         def confirm_create():
             messagebox.showinfo("Model Training", f"Training {model_type} model with {dataset_count} samples...\n\nThis may take several minutes.")
             dialog.destroy()
+            # Store training info for the TRAINING page
+            self.current_training_model = model_type
+            self.current_training_samples = dataset_count
             # TODO: Call backend to start training
             # Switch to TRAINING page to show progress
             self._switch_page("training", self._show_training_page)
