@@ -3370,7 +3370,7 @@ class AdminApp:
         # Models data
         models_data = [
             ("MESURE", "Keypoint Detection", "TRAINED" if mesure_exists else "NOT TRAINED",
-             f"V{mesure_latest_version}" if mesure_exists else "—", f"{mesure_dataset}/500", "mesure", mesure_latest_version, mesure_exists, mesure_v1_exists, mesure_v2_exists),
+             f"V{mesure_latest_version}" if mesure_exists else "—", f"{mesure_dataset}/499", "mesure", mesure_latest_version, mesure_exists, mesure_v1_exists, mesure_v2_exists),
             ("STATE", "Cable Classification", "TRAINED" if state_exists else "NOT TRAINED",
              f"V{state_latest_version}" if state_exists else "—", f"{state_dataset}/500", "state", state_latest_version, state_exists, state_v1_exists, state_v2_exists),
         ]
@@ -3394,7 +3394,8 @@ class AdminApp:
             tk.Label(row, text=version, bg=row_bg, fg=TEXT, font=("Arial", 9), width=10, anchor="w").pack(side=tk.LEFT, padx=5, pady=8)
 
             # Dataset
-            dataset_color = GREEN if "/" in dataset and int(dataset.split("/")[0]) >= 500 else TEXT
+            limit = 499 if model_id == "mesure" else 500
+            dataset_color = GREEN if "/" in dataset and int(dataset.split("/")[0]) >= limit else TEXT
             tk.Label(row, text=dataset, bg=row_bg, fg=dataset_color, font=("Arial", 9), width=12, anchor="w").pack(side=tk.LEFT, padx=5, pady=8)
 
             # Actions
@@ -3416,8 +3417,9 @@ class AdminApp:
                     add_hover_effect(delete_btn, RED, "#8B0F15", "#FFFFFF")
             else:
                 dataset_val = mesure_dataset if model_id == "mesure" else state_dataset
-                if dataset_val < 500:
-                    tk.Label(action_frame, text=f"⚠ Need {500 - dataset_val}", fg=RED, bg=row_bg, font=("Arial", 8)).pack(side=tk.LEFT, padx=2)
+                limit = 499 if model_id == "mesure" else 500
+                if dataset_val < limit:
+                    tk.Label(action_frame, text=f"⚠ Need {limit - dataset_val}", fg=RED, bg=row_bg, font=("Arial", 8)).pack(side=tk.LEFT, padx=2)
                 else:
                     create_btn = tk.Button(action_frame, text="✚ Create", font=("Arial", 8, "bold"),
                                           command=lambda m=model_id, d=dataset_val: self._create_model_dialog(m, d),
@@ -3501,10 +3503,11 @@ class AdminApp:
         tk.Label(frame, text=f"Current available dataset: {dataset_count} samples", bg=BG, fg=TEXT, font=("Arial", 11)).pack(anchor=tk.W, pady=(0, 5))
         tk.Label(frame, text=f"Current version: V{current_version} → New version: V{next_version}", bg=BG, fg=TEXT, font=("Arial", 11, "bold")).pack(anchor=tk.W, pady=(0, 15))
 
-        if dataset_count < 500:
-            shortage = 500 - dataset_count
+        limit = 499 if model_type == "mesure" else 500
+        if dataset_count < limit:
+            shortage = limit - dataset_count
             tk.Label(frame, text=f"❌ Not enough new data! Need {shortage} more samples.", bg=BG, fg=RED, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 20))
-            tk.Label(frame, text="Please collect and approve at least 500 new captures before upgrading.", bg=BG, fg=TEXT2, font=("Arial", 9)).pack(anchor=tk.W, pady=(0, 20))
+            tk.Label(frame, text=f"Please collect and approve at least {limit} new captures before upgrading.", bg=BG, fg=TEXT2, font=("Arial", 9)).pack(anchor=tk.W, pady=(0, 20))
 
             close_btn = tk.Button(frame, text="CLOSE", command=dialog.destroy, bg=PANEL, fg=TEXT, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
             close_btn.pack(anchor=tk.W)
