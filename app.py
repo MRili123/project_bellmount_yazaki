@@ -3444,7 +3444,7 @@ class AdminApp:
         """Dialog to create a new model"""
         dialog = tk.Toplevel(self.root)
         dialog.title(f"Create {model_type.upper()} Model")
-        dialog.geometry("500x300")
+        dialog.geometry("500x380")
         dialog.configure(bg=BG)
         dialog.resizable(False, False)
         dialog.grab_set()
@@ -3469,7 +3469,7 @@ class AdminApp:
 
         # Buttons
         btn_frame = tk.Frame(frame, bg=BG)
-        btn_frame.pack(fill=tk.X, pady=(10, 0))
+        btn_frame.pack(fill=tk.X, pady=10)
 
         cancel_btn = tk.Button(btn_frame, text="CANCEL", command=dialog.destroy, bg=PANEL, fg=TEXT, font=("Arial", 11, "bold"), relief=tk.FLAT, bd=0, padx=20, pady=15)
         cancel_btn.pack(side=tk.LEFT, padx=(0, 10))
