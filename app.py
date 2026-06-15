@@ -3479,7 +3479,7 @@ class AdminApp:
             messagebox.showinfo("Model Training", f"Training {model_type} model with {dataset_count} samples...\n\nThis may take several minutes.")
             dialog.destroy()
             # TODO: Call backend to start training
-            messagebox.showinfo("Success", f"Model training started! Check the TRAINING section for progress.")
+            messagebox.showinfo("Success", f"Model training request submitted.\n\nGo to model_bellmounth_mesure/model_app.py to monitor training progress.")
 
         create_btn = tk.Button(btn_frame, text="CREATE & TRAIN", command=confirm_create, bg=GREEN, fg="#FFFFFF", font=("Arial", 11, "bold"), relief=tk.FLAT, bd=0, padx=30, pady=15)
         create_btn.pack(side=tk.LEFT)
