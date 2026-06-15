@@ -3508,6 +3508,9 @@ To start training a model:
         percent_label = tk.Label(progress_frame, text="0%", bg=PANEL, fg=TEXT, font=("Arial", 9, "bold"))
         percent_label.pack(anchor=tk.E, padx=10, pady=5)
 
+        # Store reference to progress updater for background thread
+        self.current_progress_updater = update_progress
+
         # Status info with time estimation
         status_frame = tk.Frame(frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
         status_frame.pack(fill=tk.X, pady=(0, 20), padx=5)
@@ -3589,9 +3592,44 @@ To start training a model:
         go_to_model.pack(side=tk.LEFT)
         add_hover_effect(go_to_model, ACCENT, "#8B0F15", "#FFFFFF")
 
+    def _simulate_training_progress(self):
+        """Simulate training progress (DEMO MODE - remove when backend is implemented)"""
+        import time
+        import threading
+
+        def progress_updater():
+            dataset_size = getattr(self, 'current_training_samples', 100)
+            # Estimate: 2 minutes per 100 samples
+            estimated_seconds = max((dataset_size / 100) * 120, 300)
+
+            while getattr(self, 'training_active', False):
+                if hasattr(self, 'training_start_time'):
+                    elapsed_seconds = time.time() - self.training_start_time
+                    progress_percent = min(int((elapsed_seconds / estimated_seconds) * 100), 100)
+
+                    # Update progress bar if the method exists
+                    if hasattr(self, 'current_progress_updater'):
+                        try:
+                            self.current_progress_updater(progress_percent)
+                        except:
+                            pass
+
+                    # Complete training at 100%
+                    if progress_percent >= 100:
+                        self.training_active = False
+                        messagebox.showinfo("Training Complete", f"✓ {self.current_training_model.upper()} model training completed!")
+                        break
+
+                time.sleep(1)  # Update every second
+
+        # Start progress updater in background thread
+        thread = threading.Thread(target=progress_updater, daemon=True)
+        thread.start()
+
     def _cancel_training(self):
         """Cancel the ongoing training"""
         if messagebox.askyesno("Cancel Training", "Are you sure you want to cancel the training?\n\nThis cannot be undone."):
+            self.training_active = False
             # TODO: Call backend to stop training
             messagebox.showinfo("Training Cancelled", "Training has been cancelled.\n\nGo back to MODEL section to start a new training.")
             self._switch_page("model", self._show_model_page)
@@ -3637,9 +3675,13 @@ To start training a model:
             # Store training info for the TRAINING page
             self.current_training_model = model_type
             self.current_training_samples = dataset_count
+            self.training_start_time = time.time()
+            self.training_active = True
             # TODO: Call backend to start training
             # Switch to TRAINING page to show progress
             self._switch_page("training", self._show_training_page)
+            # Start simulating training progress (DEMO MODE)
+            self._simulate_training_progress()
 
         create_btn = tk.Button(btn_frame, text="CREATE & TRAIN", command=confirm_create, bg=GREEN, fg="#FFFFFF", font=("Arial", 11, "bold"), relief=tk.FLAT, bd=0, padx=30, pady=15)
         create_btn.pack(side=tk.LEFT)
