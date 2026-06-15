@@ -3469,11 +3469,45 @@ To start training a model:
 
         tk.Label(info_frame, text=info_text, bg=PANEL, fg=TEXT2, font=("Arial", 10), justify=tk.LEFT, wraplength=600).pack(anchor=tk.W, padx=20, pady=20)
 
-        # Progress placeholder
-        progress_frame = tk.Frame(frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
-        progress_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
+        # Progress section
+        tk.Label(frame, text="TRAINING PROGRESS", bg=BG, fg=TEXT, font=("Arial", 11, "bold")).pack(anchor=tk.W, pady=(20, 10))
 
-        tk.Label(progress_frame, text="No training in progress", bg=PANEL, fg=TEXT2, font=("Arial", 11)).pack(expand=True)
+        progress_frame = tk.Frame(frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
+        progress_frame.pack(fill=tk.X, pady=(0, 5), padx=5)
+
+        # Progress bar
+        progress_bar = tk.Canvas(progress_frame, bg="#E0E0E0", height=30, highlightthickness=0)
+        progress_bar.pack(fill=tk.X, padx=1, pady=1)
+
+        # Progress fill (0%)
+        progress_fill = progress_bar.create_rectangle(0, 0, 0, 30, fill=GREEN, outline=GREEN)
+
+        def update_progress(percent):
+            if percent < 0:
+                percent = 0
+            if percent > 100:
+                percent = 100
+            width = progress_bar.winfo_width()
+            if width <= 1:
+                width = 600
+            fill_width = (width - 2) * (percent / 100)
+            progress_bar.coords(progress_fill, 0, 0, fill_width, 30)
+            percent_label.config(text=f"{percent}%")
+            progress_bar.update()
+
+        # Bind the canvas to update on window resize
+        progress_bar.bind("<Configure>", lambda e: update_progress(0))
+
+        # Progress percentage
+        percent_label = tk.Label(progress_frame, text="0%", bg=PANEL, fg=TEXT, font=("Arial", 9, "bold"))
+        percent_label.pack(anchor=tk.E, padx=10, pady=5)
+
+        # Status info
+        status_frame = tk.Frame(frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
+        status_frame.pack(fill=tk.X, pady=(0, 20), padx=5)
+
+        status_info = tk.Label(status_frame, text="Status: Waiting for training to start...", bg=PANEL, fg=TEXT2, font=("Arial", 9), justify=tk.LEFT)
+        status_info.pack(anchor=tk.W, padx=10, pady=10)
 
         # Action buttons
         btn_frame = tk.Frame(frame, bg=BG)
