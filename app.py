@@ -3592,38 +3592,128 @@ To start training a model:
         go_to_model.pack(side=tk.LEFT)
         add_hover_effect(go_to_model, ACCENT, "#8B0F15", "#FFFFFF")
 
-    def _simulate_training_progress(self):
-        """Simulate training progress (DEMO MODE - remove when backend is implemented)"""
-        import time
+    def _train_model_real(self):
+        """Start REAL model training using the dataset"""
         import threading
 
-        def progress_updater():
-            dataset_size = getattr(self, 'current_training_samples', 100)
-            # Estimate: 2 minutes per 100 samples
-            estimated_seconds = max((dataset_size / 100) * 120, 300)
+        def train_worker():
+            try:
+                model_type = getattr(self, 'current_training_model', 'mesure')
+                dataset_count = getattr(self, 'current_training_samples', 100)
 
-            while getattr(self, 'training_active', False):
-                if hasattr(self, 'training_start_time'):
-                    elapsed_seconds = time.time() - self.training_start_time
-                    progress_percent = min(int((elapsed_seconds / estimated_seconds) * 100), 100)
+                # Import necessary modules
+                import json
+                import numpy as np
+                from sklearn.model_selection import train_test_split
 
-                    # Update progress bar if the method exists
-                    if hasattr(self, 'current_progress_updater'):
-                        try:
-                            self.current_progress_updater(progress_percent)
-                        except:
-                            pass
+                # Load dataset from annotations
+                dataset_path = ANNOTATIONS_FILE
+                if not dataset_path.exists():
+                    raise Exception("Dataset annotations not found")
 
-                    # Complete training at 100%
-                    if progress_percent >= 100:
-                        self.training_active = False
-                        messagebox.showinfo("Training Complete", f"✓ {self.current_training_model.upper()} model training completed!")
-                        break
+                annotations = json.loads(dataset_path.read_text())
 
-                time.sleep(1)  # Update every second
+                if not annotations:
+                    raise Exception("No dataset available")
 
-        # Start progress updater in background thread
-        thread = threading.Thread(target=progress_updater, daemon=True)
+                # Load and preprocess images
+                from PIL import Image
+                X = []
+                y = []
+
+                for ann in annotations[:dataset_count]:
+                    img_path = Path(ann.get("image_path", ""))
+                    if not img_path.is_absolute():
+                        img_path = ORIG_DIR / img_path.name
+
+                    if img_path.exists():
+                        img = Image.open(img_path).convert('L')
+                        img = img.resize((640, 480))
+                        img_array = np.array(img, dtype=np.float32) / 255.0
+
+                        # Get keypoints (normalized)
+                        keypoints = ann.get("keypoints", [0, 0, 0, 0])
+                        X.append(img_array)
+                        y.append(keypoints)
+
+                if len(X) < 10:
+                    raise Exception("Not enough valid training images")
+
+                X = np.array(X)[..., np.newaxis]  # Add channel dimension
+                y = np.array(y, dtype=np.float32)
+
+                # Split dataset
+                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+                # Build CNN model (same as model_app.py)
+                model = tf.keras.Sequential([
+                    tf.keras.layers.Input(shape=(480, 640, 1)),
+                    tf.keras.layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
+                    tf.keras.layers.BatchNormalization(),
+                    tf.keras.layers.MaxPooling2D((2, 2)),
+                    tf.keras.layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
+                    tf.keras.layers.BatchNormalization(),
+                    tf.keras.layers.MaxPooling2D((2, 2)),
+                    tf.keras.layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
+                    tf.keras.layers.BatchNormalization(),
+                    tf.keras.layers.MaxPooling2D((2, 2)),
+                    tf.keras.layers.Conv2D(256, (3, 3), activation='relu', padding='same'),
+                    tf.keras.layers.BatchNormalization(),
+                    tf.keras.layers.MaxPooling2D((2, 2)),
+                    tf.keras.layers.Flatten(),
+                    tf.keras.layers.Dense(512, activation='relu'),
+                    tf.keras.layers.BatchNormalization(),
+                    tf.keras.layers.Dropout(0.4),
+                    tf.keras.layers.Dense(256, activation='relu'),
+                    tf.keras.layers.Dropout(0.3),
+                    tf.keras.layers.Dense(4, activation='sigmoid')
+                ])
+
+                model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3), loss='mse', metrics=['mae'])
+
+                # Training callback for progress
+                class ProgressCallback(tf.keras.callbacks.Callback):
+                    def on_epoch_end(self, epoch, logs=None):
+                        pct = int((epoch + 1) / self.params['epochs'] * 100)
+                        if hasattr(self, 'app') and hasattr(self.app, 'current_progress_updater'):
+                            try:
+                                self.app.current_progress_updater(pct)
+                            except:
+                                pass
+
+                progress_cb = ProgressCallback()
+                progress_cb.app = self
+
+                # Train model
+                history = model.fit(
+                    X_train, y_train,
+                    validation_split=0.1,
+                    epochs=150,
+                    batch_size=16,
+                    callbacks=[
+                        tf.keras.callbacks.EarlyStopping(patience=20, restore_best_weights=True, verbose=0),
+                        progress_cb
+                    ],
+                    verbose=0
+                )
+
+                # Evaluate
+                test_loss, test_mae = model.evaluate(X_test, y_test, verbose=0)
+
+                # Save model
+                model_file = MODELS_MESURE_DIR / f"CNN_BELMOUNTH_MODEL_V1.h5"
+                model_file.parent.mkdir(parents=True, exist_ok=True)
+                model.save(str(model_file))
+
+                self.training_active = False
+                messagebox.showinfo("Training Complete", f"✓ {model_type.upper()} model trained and saved!\n\nTest Loss: {test_loss:.4f}\nTest MAE: {test_mae:.4f}")
+
+            except Exception as e:
+                self.training_active = False
+                messagebox.showerror("Training Error", f"Training failed:\n{str(e)}")
+
+        # Start training in background
+        thread = threading.Thread(target=train_worker, daemon=False)
         thread.start()
 
     def _cancel_training(self):
@@ -3677,11 +3767,10 @@ To start training a model:
             self.current_training_samples = dataset_count
             self.training_start_time = time.time()
             self.training_active = True
-            # TODO: Call backend to start training
             # Switch to TRAINING page to show progress
             self._switch_page("training", self._show_training_page)
-            # Start simulating training progress (DEMO MODE)
-            self._simulate_training_progress()
+            # Start REAL training
+            self._train_model_real()
 
         create_btn = tk.Button(btn_frame, text="CREATE & TRAIN", command=confirm_create, bg=GREEN, fg="#FFFFFF", font=("Arial", 11, "bold"), relief=tk.FLAT, bd=0, padx=30, pady=15)
         create_btn.pack(side=tk.LEFT)
