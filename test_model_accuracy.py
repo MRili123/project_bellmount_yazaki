@@ -24,7 +24,9 @@ except ImportError:
     import tensorflow as tf
     from tensorflow.keras.models import load_model
 
-MODEL_PATH = Path(__file__).parent / "model_bellmounth_mesure" / "model" / "CNN_BELMOUNTH_MODEL_V1.h5"
+MODELS_ROOT = Path(__file__).parent / "models"
+MODELS_MESURE_DIR = MODELS_ROOT / "mesure"
+MODEL_PATH = MODELS_MESURE_DIR / "CNN_BELMOUNTH_MODEL_V1.h5"
 DATASET_DIR = Path(__file__).parent / "model_bellmounth_mesure" / "dataset"
 ANNOTATIONS_FILE = DATASET_DIR / "annotations.json"
 

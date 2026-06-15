@@ -76,7 +76,9 @@ DATASET_DIR = ROOT / "dataset"
 ORIG_DIR = DATASET_DIR / "original"
 THRESH_DIR = DATASET_DIR / "thresholded"
 ANNOTATIONS_FILE = DATASET_DIR / "annotations.json"
-MODEL_DIR = ROOT / "model"
+# Models folder - separate from model_bellmounth_mesure
+MODELS_ROOT = ROOT.parent / "models"
+MODEL_DIR = MODELS_ROOT / "mesure"
 TEST_IMAGES_DIR = ROOT / "test_images"
 
 for d in (CAPTURED_DIR, DATASET_DIR, ORIG_DIR, THRESH_DIR, MODEL_DIR, TEST_IMAGES_DIR):

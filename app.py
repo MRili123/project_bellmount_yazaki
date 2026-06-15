@@ -51,7 +51,10 @@ DATASET_DIR = Path(__file__).parent / "model_bellmounth_mesure" / "dataset"
 ORIG_DIR = DATASET_DIR / "original"
 THRESH_DIR = DATASET_DIR / "thresholded"
 ANNOTATIONS_FILE = DATASET_DIR / "annotations.json"
-MODEL_PATH = Path(__file__).parent / "model_bellmounth_mesure" / "model" / "CNN_BELMOUNTH_MODEL_V1.h5"
+# Models folder - separate from model_bellmounth_mesure
+MODELS_ROOT = Path(__file__).parent / "models"
+MODELS_MESURE_DIR = MODELS_ROOT / "mesure"
+MODEL_PATH = MODELS_MESURE_DIR / "CNN_BELMOUNTH_MODEL_V1.h5"
 
 for d in [ORIG_DIR, THRESH_DIR]:
     d.mkdir(parents=True, exist_ok=True)
@@ -409,10 +412,6 @@ class LoginWindow:
         sign_in_btn.pack(padx=28, pady=(0, 28), fill=tk.X)
         add_hover_effect(sign_in_btn, self.LOGIN_RED, self.LOGIN_RED, "#FFFFFF")
 
-        # Footer
-        tk.Label(card, text="Press Enter to sign in", bg=self.LOGIN_CARD, fg=self.LOGIN_TEXT2,
-                font=("Arial", 9)).pack(pady=(0, 20))
-
         self.password_entry.bind("<Return>", lambda e: self._login())
         self.username_entry.focus()
 
@@ -575,6 +574,26 @@ class MainApp:
         body.pack(fill=tk.X, padx=12, pady=(0, 12))
         return body
 
+    def _check_api_response(self, result):
+        """Check API response for deactivation or other errors. Returns True if valid, False if deactivated."""
+        if isinstance(result, dict) and result.get("error_type") == "account_deactivated":
+            self._logout_due_to_deactivation()
+            return False
+        return True
+
+    def _logout_due_to_deactivation(self):
+        """Logout user due to account deactivation"""
+        self._loop_running = False
+        if self.cap:
+            self.cap.release()
+
+        messagebox.showerror(
+            "Account Deactivated",
+            "Your account has been deactivated by an administrator.\n\nPlease contact your administrator for more information.",
+            parent=self.root
+        )
+        self.root.destroy()
+
     def _on_closing(self):
         self._loop_running = False
         if self.cap:
@@ -587,6 +606,8 @@ class MainApp:
         """Fetch switches for this machine from API"""
         if self.api_client:
             result = self.api_client.get_switches(machine_id=self.machine_id)
+            if not self._check_api_response(result):
+                return []
             if result.get("ok"):
                 return result.get("data", [])
             else:
@@ -1357,6 +1378,8 @@ class MainApp:
                 image_original_path=str(orig_path),
                 image_thresholded_path=str(thresh_path)
             )
+            if not self._check_api_response(result):
+                return
             self.last_upload_result = result
 
         self.annotation_count += 1
@@ -1610,6 +1633,8 @@ class MainApp:
             self.last_health_check_time = current_time
             try:
                 result = self.api_client.health_check()
+                if not self._check_api_response(result):
+                    return
                 if not result.get("ok"):
                     error_type = result.get("error_type", "unknown")
                     message = result.get("error", "Server connection lost")
@@ -3235,7 +3260,7 @@ class AdminApp:
 
     def _load_model_metadata(self, model_type="mesure"):
         """Load model metadata from JSON file, return default if not found"""
-        metadata_path = Path(__file__).parent / "model_bellmounth_mesure" / "model" / f"{model_type}_metadata.json"
+        metadata_path = MODELS_MESURE_DIR / f"{model_type}_metadata.json"
 
         if metadata_path.exists():
             try:
@@ -3290,7 +3315,7 @@ class AdminApp:
         state_dataset = len([c for c in dataset_captures if c.get("annoteur_approved") and c.get("model_type") == "state"]) if dataset_captures else 0
 
         # Check for actual model files and track versions
-        model_dir = Path(__file__).parent / "model_bellmounth_mesure" / "model"
+        model_dir = MODELS_MESURE_DIR
 
         # MESURE model versions
         mesure_model_v1 = model_dir / "CNN_BELMOUNTH_MODEL_V1.h5"
@@ -3517,7 +3542,7 @@ class AdminApp:
             return
 
         try:
-            model_dir = Path(__file__).parent / "model_bellmounth_mesure" / "model"
+            model_dir = MODELS_MESURE_DIR
 
             if model_type == "mesure":
                 if version == 1:
@@ -3543,11 +3568,11 @@ class AdminApp:
     def _deploy_models_dialog(self, mesure_exists, state_exists, mesure_latest_version, state_latest_version):
         """Dialog to deploy models to machines with version selection"""
         # Check available versions
-        model_dir = Path(__file__).parent / "model_bellmounth_mesure" / "model"
-        mesure_v1 = model_dir / "CNN_BELMOUNTH_MODEL_V1.h5"
-        mesure_v2 = model_dir / "CNN_BELMOUNTH_MESURE_V2.h5"
-        state_v1 = model_dir / "CNN_BELMOUNTH_STATE_V1.h5"
-        state_v2 = model_dir / "CNN_BELMOUNTH_STATE_V2.h5"
+        models_state_dir = MODELS_ROOT / "state"
+        mesure_v1 = MODELS_MESURE_DIR / "CNN_BELMOUNTH_MODEL_V1.h5"
+        mesure_v2 = MODELS_MESURE_DIR / "CNN_BELMOUNTH_MESURE_V2.h5"
+        state_v1 = models_state_dir / "CNN_BELMOUNTH_STATE_V1.h5"
+        state_v2 = models_state_dir / "CNN_BELMOUNTH_STATE_V2.h5"
 
         mesure_versions = []
         if mesure_v1.exists():
