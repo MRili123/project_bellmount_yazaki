@@ -3493,6 +3493,12 @@ To start training a model:
             fill_width = (width - 2) * (percent / 100)
             progress_bar.coords(progress_fill, 0, 0, fill_width, 30)
             percent_label.config(text=f"{percent}%")
+
+            # Calculate and update samples processed
+            if dataset_size > 0:
+                samples_processed = int((dataset_size * percent) / 100)
+                self.training_time_updater(dataset_size, percent, samples_processed)
+
             progress_bar.update()
 
         # Bind the canvas to update on window resize
@@ -3521,7 +3527,11 @@ To start training a model:
 
         # Time estimation
         time_info = tk.Label(status_frame, text="", bg=PANEL, fg=TEXT2, font=("Arial", 9), justify=tk.LEFT)
-        time_info.pack(anchor=tk.W, padx=10, pady=(0, 10))
+        time_info.pack(anchor=tk.W, padx=10, pady=(0, 5))
+
+        # Samples processed counter
+        samples_info = tk.Label(status_frame, text="", bg=PANEL, fg=TEXT2, font=("Arial", 9), justify=tk.LEFT)
+        samples_info.pack(anchor=tk.W, padx=10, pady=(0, 10))
 
         def calculate_training_time(dataset_size):
             """Calculate estimated training time in minutes based on dataset size"""
@@ -3540,8 +3550,8 @@ To start training a model:
             else:
                 return f"{minutes}m {seconds}s"
 
-        def update_time_display(dataset_size=0, elapsed_percent=0):
-            """Update time information display"""
+        def update_time_display(dataset_size=0, elapsed_percent=0, samples_processed=0):
+            """Update time and samples information display"""
             if dataset_size > 0:
                 estimated_minutes = calculate_training_time(dataset_size)
                 estimated_time_str = format_time(estimated_minutes)
@@ -3552,12 +3562,17 @@ To start training a model:
 
                 time_text = f"⏱ Estimated: {estimated_time_str}  |  Elapsed: {elapsed_time_str}  |  Remaining: {remaining_time_str}"
                 time_info.config(text=time_text)
+
+                # Update samples processed
+                samples_text = f"📊 Samples Processed: {samples_processed}/{dataset_size}"
+                samples_info.config(text=samples_text)
             else:
                 time_info.config(text="")
+                samples_info.config(text="")
 
         # Show time estimation if training is active
         if training_active and dataset_size > 0:
-            update_time_display(dataset_size, 0)
+            update_time_display(dataset_size, 0, 0)
 
         # Store reference for updates
         self.training_time_updater = update_time_display
