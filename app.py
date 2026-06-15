@@ -3481,7 +3481,7 @@ class AdminApp:
             # TODO: Call backend to start training
             messagebox.showinfo("Success", f"Model training started! Check the TRAINING section for progress.")
 
-        create_btn = tk.Button(btn_frame, text="✚ CREATE & TRAIN", command=confirm_create, bg=GREEN, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
+        create_btn = tk.Button(btn_frame, text="✚ CREATE & TRAIN", command=confirm_create, bg=GREEN, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=20, pady=12)
         create_btn.pack(side=tk.LEFT)
         add_hover_effect(create_btn, GREEN, "#388E3C", "#FFFFFF")
 
