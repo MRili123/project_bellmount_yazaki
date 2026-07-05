@@ -87,10 +87,13 @@ class Measurement(Base):
     p1_y = Column(Integer)
     p2_x = Column(Integer)
     p2_y = Column(Integer)
-    capture_method = Column(Enum(CaptureMethod))
+    # Stored as plain strings (values from CaptureMethod / MeasurementStatus).
+    # Using String rather than Enum() so a legacy/unexpected value can never
+    # crash a whole SELECT at row-load time (see captures list endpoint).
+    capture_method = Column(String)
     image_path_original = Column(String)
     image_path_thresholded = Column(String)
-    measurement_status = Column(Enum(MeasurementStatus))
+    measurement_status = Column(String)
     delta_mm = Column(Float)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -109,9 +112,13 @@ class Capture(Base):
     p2_y = Column(Integer)
     measured_distance_mm = Column(Float)
     zoom_level = Column(Float, nullable=True)
-    capture_method = Column(Enum(CaptureMethod))
-    measurement_status = Column(Enum(MeasurementStatus))
+    # Plain strings (values from CaptureMethod / MeasurementStatus) — never
+    # Enum(), so a legacy/unexpected value can't crash the list endpoint.
+    capture_method = Column(String)
+    measurement_status = Column(String)
     delta_mm = Column(Float)
+    # Cable state label set by the annoteur (no_cable / cable_male / cable_good).
+    cable_state = Column(String, nullable=True)
     annoteur_approved = Column(Boolean, default=False)
     in_training_dataset = Column(Boolean, default=False)
     quality_score = Column(Float, nullable=True)

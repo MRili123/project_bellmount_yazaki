@@ -25,3 +25,14 @@ __pycache__/
 *.swp
 *.swo
 .DS_Store
+
+# Claude Code local config
+.claude/
+
+# Large local model backups (too big for GitHub / not needed in repo)
+model_backups/
+*.h5.bak
+
+# Stale DB backups and logs
+*.stale-bak
+*.log

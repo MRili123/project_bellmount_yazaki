@@ -148,6 +148,7 @@ class CaptureAdminResponse(BaseModel):
     machine_id: str
     switch_id: str
     annoteur_id: Optional[str]
+    annoteur_name: Optional[str] = None
     image_original_path: str
     image_thresholded_path: str
     p1_x: int
@@ -156,11 +157,17 @@ class CaptureAdminResponse(BaseModel):
     p2_y: int
     measured_distance_mm: float
     expected_diameter_mm: Optional[float] = None
+    tolerance_min: Optional[float] = None
+    tolerance_max: Optional[float] = None
+    machine_name: Optional[str] = None
+    switch_name: Optional[str] = None
     zoom_level: Optional[float] = None
     capture_method: str
     measurement_status: str
     delta_mm: float
+    cable_state: Optional[str] = None
     annoteur_approved: bool
+    in_training_dataset: bool = False
     quality_score: Optional[float]
     model_type: Optional[str] = "mesure"
     created_at: datetime

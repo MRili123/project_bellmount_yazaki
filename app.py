@@ -3,24 +3,26 @@
 
 import cv2
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 import json
 import time
 import math
 import sys
 import os
 import uuid
+import io
+import tempfile
 from datetime import datetime
 from pathlib import Path
 import numpy as np
 from PIL import Image, ImageTk
 import requests
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "model_bellmounth_mesure"))
+sys.path.insert(0, os.path.join(os.path.expanduser("~"), "Desktop", "model_bellmounth_mesure"))
 from utils import apply_threshold
 
 from camera_setup import get_camera
-from pixelmeasure import PixelMeasure
+from pixelmeasure import PixelMeasure, DEFAULT_MM_PER_PIXEL
 from cable_detector import detect_cable
 import cable_detector
 from api_client import APIClient, check_internet_connection
@@ -47,7 +49,8 @@ SEP     = "#E8E8E8"
 
 # ==================== CONFIG ====================
 CONFIG_FILE = Path(__file__).parent / "config.json"
-DATASET_DIR = Path(__file__).parent / "model_bellmounth_mesure" / "dataset"
+# Dataset is now on C: drive (NOT in OneDrive to avoid permission issues)
+DATASET_DIR = Path("C:/BellmouthProject/dataset")
 ORIG_DIR = DATASET_DIR / "original"
 THRESH_DIR = DATASET_DIR / "thresholded"
 ANNOTATIONS_FILE = DATASET_DIR / "annotations.json"
@@ -492,6 +495,8 @@ class MainApp:
             return
 
         self.current_frame = None
+        self.frozen = False  # True after a capture: the displayed frame is held still
+        self.frozen_frame = None  # snapshot shown while frozen
         self.mode = "AUTO"
         self.p1 = None
         self.p2 = None
@@ -1002,15 +1007,338 @@ class MainApp:
         self._update_display()
 
     def _show_notifications_page(self):
-        """Display notifications page"""
+        """Display notifications page with model update buttons"""
         frame = tk.Frame(self.content_container, bg=BG)
         frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
-        tk.Label(frame, text="NOTIFICATIONS", bg=BG, fg=TEXT,
+        tk.Label(frame, text="📬 NOTIFICATIONS", bg=BG, fg=TEXT,
                 font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
 
-        tk.Label(frame, text="No new notifications", bg=BG, fg=TEXT2,
-                font=("Arial", 12)).pack(pady=40)
+        # Fetch notifications from API
+        try:
+            from api_client import APIClient
+            api = APIClient(api_url="http://localhost:8000")
+            result = api.get_notifications()
+            notifications = result.get('data', []) if result.get('ok') else []
+        except:
+            notifications = []
+
+        if not notifications:
+            tk.Label(frame, text="No new notifications", bg=BG, fg=TEXT2,
+                    font=("Arial", 12)).pack(pady=40)
+            return
+
+        # Create scrollable area for notifications
+        canvas = tk.Canvas(frame, bg=BG, highlightthickness=0)
+        scrollbar = tk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=BG)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Display each notification
+        for notif in notifications:
+            notif_type = notif.get('notification_type', 'info')
+            title = notif.get('title', 'Notification')
+            body = notif.get('body', '')
+
+            # Notification card
+            card = tk.Frame(scrollable_frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
+            card.pack(fill=tk.X, pady=10, padx=5)
+
+            # Title and type indicator
+            title_frame = tk.Frame(card, bg=PANEL)
+            title_frame.pack(fill=tk.X, padx=15, pady=(10, 5))
+
+            # Icon based on type
+            icon = self._get_notification_icon(notif_type)
+            tk.Label(title_frame, text=f"{icon} {title}", bg=PANEL, fg=TEXT,
+                    font=("Arial", 11, "bold")).pack(anchor=tk.W)
+
+            # Body
+            tk.Label(card, text=body, bg=PANEL, fg=TEXT2, font=("Arial", 9),
+                    justify=tk.LEFT, wraplength=500).pack(anchor=tk.W, padx=15, pady=5)
+
+            # Action buttons based on notification type
+            button_frame = tk.Frame(card, bg=PANEL)
+            button_frame.pack(fill=tk.X, padx=15, pady=(5, 10))
+
+            # A model-update notification carries a "Download link:" line in its body
+            has_link = "Download link:" in body
+            is_model_notif = (notif_type in ['mesure-upload', 'state-upload', 'model_update']
+                              or (notif_type == 'info' and has_link))
+
+            if is_model_notif and has_link:
+                # Extract only the URL (first line after the marker), then install on click.
+                download_link = body.split("Download link:")[-1].strip().split("\n")[0].strip()
+                model_types = self._parse_model_types(notif_type, title, body)
+                label = "⬇️ UPDATE " + " + ".join(m.upper() for m in model_types) + " MODEL"
+                update_btn = tk.Button(button_frame, text=label,
+                                      command=lambda link=download_link, mt=tuple(model_types), nid=notif.get('id'): self._download_and_install_model(link, mt, nid),
+                                      bg=GREEN, fg="#FFFFFF", font=("Arial", 9, "bold"),
+                                      relief=tk.FLAT, bd=0, padx=15, pady=8)
+                update_btn.pack(side=tk.LEFT, padx=(0, 10))
+                add_hover_effect(update_btn, GREEN, "#388E3C", "#FFFFFF")
+            else:
+                # Non-model notifications keep the Mark as Read button
+                mark_read_btn = tk.Button(button_frame, text="✓ Mark as Read",
+                                         bg=ACCENT, fg="#FFFFFF", font=("Arial", 9, "bold"),
+                                         relief=tk.FLAT, bd=0, padx=15, pady=8)
+                mark_read_btn.pack(side=tk.LEFT)
+                add_hover_effect(mark_read_btn, ACCENT, "#5A5F75", "#FFFFFF")
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    def _get_notification_icon(self, notif_type):
+        """Get icon emoji for notification type"""
+        icons = {
+            'mesure-upload': '📊',
+            'state-upload': '🔍',
+            'info': '📦',
+            'reply': '💬',
+            'model_update': '📦'
+        }
+        return icons.get(notif_type, '📬')
+
+    def _parse_model_types(self, notif_type, title, body):
+        """Determine which model slot(s) a notification targets: mesure, state, or both."""
+        if notif_type == "mesure-upload":
+            return ["mesure"]
+        if notif_type == "state-upload":
+            return ["state"]
+        # Fallback: scan the title/body text for model keywords
+        text = f"{title} {body}".upper()
+        types = []
+        if "MESURE" in text:
+            types.append("mesure")
+        if "STATE" in text:
+            types.append("state")
+        return types or ["mesure"]
+
+    def _extract_drive_file_id(self, url):
+        """Extract the Google Drive file ID from any common link format."""
+        import re
+        if not url:
+            return None
+        for pattern in (
+            r"/file/d/([a-zA-Z0-9_-]+)",   # .../file/d/FILE_ID/view  (share/view link)
+            r"[?&]id=([a-zA-Z0-9_-]+)",    # ...uc?id=FILE_ID  or  open?id=FILE_ID
+            r"/d/([a-zA-Z0-9_-]+)",        # .../d/FILE_ID
+        ):
+            m = re.search(pattern, url)
+            if m:
+                return m.group(1)
+        return None
+
+    def _download_drive_zip(self, download_link, temp_zip, progress_var, status_text, progress_dialog):
+        """Download a (possibly large) file from a Google Drive link to temp_zip.
+
+        Converts share/view links to a direct download and resolves Google's
+        large-file virus-scan confirmation page. Raises if Drive returns HTML
+        (e.g. the file isn't shared as 'Anyone with the link').
+        """
+        import re
+        import requests
+
+        session = requests.Session()
+        file_id = self._extract_drive_file_id(download_link)
+        base = "https://drive.google.com/uc?export=download"
+
+        if file_id:
+            response = session.get(base, params={"id": file_id}, stream=True)
+        else:
+            response = session.get(download_link, stream=True)
+        response.raise_for_status()
+
+        # Large files: Google serves an HTML interstitial that needs a confirm token
+        if "text/html" in response.headers.get("Content-Type", ""):
+            html = response.text
+
+            token = None
+            for k, v in session.cookies.items():
+                if k.startswith("download_warning"):
+                    token = v
+
+            if token and file_id:
+                response = session.get(base, params={"id": file_id, "confirm": token}, stream=True)
+            else:
+                # Newer flow: re-submit the download form (action + hidden inputs)
+                action = re.search(r'action="([^"]+)"', html)
+                if action:
+                    form_url = action.group(1).replace("&amp;", "&")
+                    params = dict(re.findall(r'name="([^"]+)"\s+value="([^"]*)"', html))
+                    response = session.get(form_url, params=params, stream=True)
+            response.raise_for_status()
+
+        # Final guard: still HTML means the file isn't publicly downloadable
+        if "text/html" in response.headers.get("Content-Type", ""):
+            raise ValueError(
+                "Google Drive returned a web page instead of the file.\n\n"
+                "Set the file's sharing to 'Anyone with the link' and try again."
+            )
+
+        total_size = int(response.headers.get('content-length', 0))
+        downloaded = 0
+        with open(temp_zip, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total_size:
+                        percent = int((downloaded / total_size) * 80)
+                        progress_var.set(percent)
+                        status_text.config(text=f"Downloading... {percent}%")
+                        progress_dialog.update()
+
+    def _download_and_install_model(self, download_link, model_types, notif_id=None):
+        """Download a model ZIP from the link and install it, replacing the old model(s).
+
+        model_types is a list like ['mesure'], ['state'] or ['mesure', 'state'].
+        The matching model folder is deleted entirely (no backup) and replaced with
+        the new files from the ZIP. On success the source notification (notif_id) is
+        deleted from the server and the notifications page is refreshed.
+        """
+        # Accept a single string for backward compatibility
+        if isinstance(model_types, str):
+            model_types = [model_types]
+        model_types = list(model_types)
+
+        # Validate link (reject empty, the unedited placeholder, or non-http URLs)
+        if not download_link or "id=..." in download_link or not download_link.startswith("http"):
+            messagebox.showerror("Error", "Invalid download link in notification")
+            return
+
+        try:
+            import requests
+            import zipfile
+            import shutil
+
+            # Map each model type to its destination folder
+            dest_dirs = {
+                "mesure": MODELS_MESURE_DIR,
+                "state": MODELS_ROOT / "state",
+            }
+            for mt in model_types:
+                if mt not in dest_dirs:
+                    messagebox.showerror("Error", f"Unknown model type: {mt}")
+                    return
+
+            # Create progress dialog
+            progress_dialog = tk.Toplevel(self.root)
+            progress_dialog.title("Installing Model Update")
+            progress_dialog.geometry("500x200")
+            progress_dialog.configure(bg=BG)
+            progress_dialog.grab_set()
+
+            content = tk.Frame(progress_dialog, bg=BG)
+            content.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+            label_txt = " + ".join(m.upper() for m in model_types)
+            tk.Label(content, text=f"📥 Installing {label_txt} Model...", bg=BG, fg=TEXT, font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+            from tkinter import ttk
+            progress_var = tk.DoubleVar(value=0)
+            progress_bar = ttk.Progressbar(content, variable=progress_var, maximum=100, length=400, mode='determinate')
+            progress_bar.pack(fill=tk.X, pady=(0, 10))
+
+            status_text = tk.Label(content, text="Downloading...", bg=BG, fg=TEXT2, font=("Arial", 9))
+            status_text.pack(anchor=tk.W)
+
+            progress_dialog.update()
+
+            # Download the ZIP (handles Drive share/view links + large-file confirm)
+            print(f"Downloading model from {download_link[:50]}...")
+            temp_zip = Path(tempfile.gettempdir()) / f"bellmouth_model_update_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+            self._download_drive_zip(download_link, temp_zip, progress_var, status_text, progress_dialog)
+
+            # Extract ZIP into a dedicated temp folder
+            progress_var.set(80)
+            status_text.config(text="Extracting files...")
+            progress_dialog.update()
+
+            extract_root = temp_zip.parent / f"bellmouth_extract_{datetime.now().strftime('%H%M%S')}"
+            extract_root.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(temp_zip, 'r') as zf:
+                zf.extractall(extract_root)
+
+            # Install each requested model type: delete the old folder, then replace
+            installed = []
+            for mt in model_types:
+                extracted_path = extract_root / mt
+                if not extracted_path.exists():
+                    print(f"⚠️ ZIP has no '{mt}/' folder - skipping {mt}")
+                    continue
+
+                dest_dir = dest_dirs[mt]
+                # Delete the old model entirely (no backup, per requirement)
+                if dest_dir.exists():
+                    shutil.rmtree(dest_dir)
+                    print(f"Deleted old {mt} model at {dest_dir}")
+                dest_dir.mkdir(parents=True, exist_ok=True)
+
+                for file in extracted_path.glob("*"):
+                    shutil.move(str(file), str(dest_dir / file.name))
+                installed.append(mt.upper())
+
+            # Cleanup
+            try:
+                temp_zip.unlink()
+                shutil.rmtree(extract_root)
+            except Exception:
+                pass
+
+            # Update progress
+            progress_var.set(100)
+            status_text.config(text="✓ Installation complete!")
+            progress_dialog.update()
+
+            self.root.after(2000, progress_dialog.destroy)
+
+            # Drop any cached model so the measure section reloads the new one
+            self._tf_model = None
+
+            if installed:
+                messagebox.showinfo("Success", f"✓ {' + '.join(installed)} model updated successfully!\n\nThe new model is now active.")
+                print(f"✓ Installed models: {', '.join(installed)}")
+
+                # Delete the source notification AND its duplicates (admin sends one
+                # per active machine, so the same update can appear several times).
+                try:
+                    from api_client import APIClient
+                    _api = APIClient(api_url="http://localhost:8000")
+                    deleted_ids = set()
+                    if notif_id:
+                        _api.delete_notification(notif_id)
+                        deleted_ids.add(notif_id)
+                    # Remove any other copies carrying the same download link
+                    res = _api.get_notifications()
+                    for n in (res.get('data', []) if res.get('ok') else []):
+                        nid = n.get('id')
+                        if nid and nid not in deleted_ids and download_link and download_link in n.get('body', ''):
+                            _api.delete_notification(nid)
+                            deleted_ids.add(nid)
+                except Exception as e:
+                    print(f"Could not delete notification(s): {e}")
+
+                # Rebuild the notifications page so the installed one disappears
+                try:
+                    for widget in self.content_container.winfo_children():
+                        widget.destroy()
+                    self._show_notifications_page()
+                except Exception as e:
+                    print(f"Could not refresh notifications page: {e}")
+            else:
+                messagebox.showwarning("Nothing Installed", "The downloaded ZIP did not contain the expected model folder(s).")
+
+        except Exception as e:
+            messagebox.showerror("Installation Error", f"Failed to install model:\n{str(e)}")
+            print(f"Model installation error: {e}")
 
     def _show_reclamations_page(self):
         """Display reclamations (issues) report page"""
@@ -1044,7 +1372,33 @@ class MainApp:
         category_menu.config(bg=PANEL, fg=TEXT, font=("Arial", 10), relief=tk.FLAT, bd=0, highlightthickness=0)
         category_menu.pack(fill=tk.X, pady=(0, 12))
 
-        btn = tk.Button(inner, text="SUBMIT REPORT", command=lambda: print("Report submitted"),
+        def submit_report():
+            title = title_entry.get().strip()
+            description = desc_text.get("1.0", tk.END).strip()
+            category = category_var.get()
+
+            if not title:
+                messagebox.showwarning("Validation", "Please enter a title")
+                return
+            if not description:
+                messagebox.showwarning("Validation", "Please describe the issue")
+                return
+
+            result = self.api_client.submit_report(
+                machine_name=self.machine_name,
+                title=title,
+                description=description,
+                category=category,
+            )
+            if result.get("ok"):
+                messagebox.showinfo("Success", "Report submitted successfully")
+                title_entry.delete(0, tk.END)
+                desc_text.delete("1.0", tk.END)
+                category_var.set("bug")
+            else:
+                messagebox.showerror("Error", f"Failed to submit report: {result.get('error', 'Unknown error')}")
+
+        btn = tk.Button(inner, text="SUBMIT REPORT", command=submit_report,
                        bg=ACCENT, fg="#FFFFFF", font=("Arial", 11, "bold"),
                        relief=tk.FLAT, bd=0, padx=20, pady=10)
         btn.pack(fill=tk.X)
@@ -1081,8 +1435,13 @@ class MainApp:
 
         tk.Frame(top, bg=PANEL).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        tk.Label(top, text="●", bg=PANEL, fg=RED, font=("Arial", 10)).pack(side=tk.LEFT, padx=(0, 4))
-        tk.Label(top, text="LIVE", bg=PANEL, fg=TEXT2, font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 12))
+        self.live_dot = tk.Label(top, text="●", bg=PANEL, fg=RED, font=("Arial", 10))
+        self.live_dot.pack(side=tk.LEFT, padx=(0, 4))
+        self.live_lbl = tk.Label(top, text="LIVE", bg=PANEL, fg=TEXT2, font=("Arial", 9), cursor="hand2")
+        self.live_lbl.pack(side=tk.LEFT, padx=(0, 12))
+        # Click the indicator to resume the live feed after a capture freeze
+        self.live_lbl.bind("<Button-1>", self._resume_live)
+        self.live_dot.bind("<Button-1>", self._resume_live)
 
         # Illumination controls
         tk.Label(top, text="LED", bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=(0, 6))
@@ -1156,6 +1515,7 @@ class MainApp:
         self.p1 = self.p2 = self.dist_mm = None
         self.measurement_started = False
         self._reset_status_leds()
+        self._set_frozen(False)  # switching modes resumes the live feed
         # Reset zoom and pan when switching modes
         self.zoom = 1.0
         self.pan_x = 0
@@ -1267,46 +1627,101 @@ class MainApp:
         self.drag_start = None
 
     def _on_capture(self):
+        print(f"[CAPTURE] clicked | mode={self.mode} | frame={'set' if self.current_frame is not None else 'None'}", file=sys.stderr)
         if self.current_frame is None:
+            messagebox.showwarning("No Frame", "No camera frame available to capture.")
             return
 
         if self.mode == "AUTO":
             self.measurement_started = True
             result = self._run_inference(self.current_frame)
+            print(f"[CAPTURE] inference result = {result}", file=sys.stderr)
             if result:
                 self.p1, self.p2, self.dist_mm = result
+                # Light the CABLE OK / NOT OK LED based on the selected switch tolerance.
+                self._evaluate_cable_status()
+                # Keep the live feed running; the detected points are drawn as an
+                # overlay on top of the live frames (no freeze).
+                if hasattr(self, 'canvas'):
+                    self._update_display()
+
+    def _set_frozen(self, frozen):
+        """Freeze/resume the live preview and update the LIVE/FROZEN indicator."""
+        self.frozen = frozen
+        if hasattr(self, 'live_lbl'):
+            if frozen:
+                self.live_lbl.config(text="FROZEN — click to resume")
+                self.live_dot.config(fg=AMBER)
+            else:
+                self.live_lbl.config(text="LIVE")
+                self.live_dot.config(fg=RED)
+
+    def _resume_live(self, event=None):
+        """Resume the live feed after a freeze."""
+        if getattr(self, 'frozen', False):
+            self._set_frozen(False)
 
     def _run_inference(self, frame):
+        print(f"[INFER] _TF_AVAILABLE={_TF_AVAILABLE} | MODEL_PATH={MODEL_PATH} | exists={MODEL_PATH.exists()}", file=sys.stderr)
         if not _TF_AVAILABLE:
+            messagebox.showwarning(
+                "Auto Capture Unavailable",
+                "TensorFlow is not installed, so AUTO detection can't run.\n\n"
+                "Install it with 'pip install tensorflow', or switch to MANUAL mode "
+                "and place the points by hand.")
             return None
 
-        # Model loading commented out - add models to models/mesure/ folder to enable
-        # if self._tf_model is None:
-        #     try:
-        #         self._tf_model = tf.keras.models.load_model(str(MODEL_PATH), compile=False)
-        #     except:
-        #         return None
+        # Lazy-load the CNN model on first use (it is large, ~1.9 GB, so the first
+        # capture takes a few seconds while it loads into memory).
+        if self._tf_model is None:
+            if not MODEL_PATH.exists():
+                messagebox.showerror(
+                    "Model Not Found",
+                    f"The measurement model was not found at:\n{MODEL_PATH}\n\n"
+                    "Train or install a MESURE model first, or use MANUAL mode.")
+                return None
+            try:
+                self.capture_btn.config(text="LOADING MODEL…", state=tk.DISABLED)
+                self.root.update_idletasks()
+                print(f"[INFER] loading model from {MODEL_PATH} ...", file=sys.stderr)
+                self._tf_model = tf.keras.models.load_model(str(MODEL_PATH), compile=False)
+                print(f"[INFER] model loaded OK | input_shape={self._tf_model.input_shape}", file=sys.stderr)
+            except Exception as e:
+                print(f"[INFER] model load FAILED: {type(e).__name__}: {e}", file=sys.stderr)
+                messagebox.showerror("Model Load Failed", f"Could not load the model:\n{e}")
+                return None
+            finally:
+                self.capture_btn.config(text="CAPTURE", state=tk.NORMAL)
 
-        # Model inference disabled - uncomment when model files are available
-        # h, w = frame.shape[:2]
-        # thresh = apply_threshold(frame)
-        # resized = cv2.resize(thresh, (640, 480))
-        # normalized = resized.astype(np.float32) / 255.0
-        # inp = normalized[..., np.newaxis][np.newaxis, ...]
-        #
-        # pred = self._tf_model.predict(inp, verbose=0)[0]
-        # p1 = (int(pred[0] * w), int(pred[1] * h))
-        # # Use P1's Y coordinate for P2 (horizontal alignment)
-        # p2 = (int(pred[2] * w), p1[1])
-        # pixel_dist = math.dist(p1, p2)
-        #
-        # self.pixel_measure.update()
-        # _, mm_pp = self.pixel_measure.get_values()
-        # dist_mm = pixel_dist * mm_pp if mm_pp else None
-        #
-        # return p1, p2, dist_mm
+        try:
+            h, w = frame.shape[:2]
+            thresh = apply_threshold(frame)
+            resized = cv2.resize(thresh, (640, 480))
+            normalized = resized.astype(np.float32) / 255.0
+            inp = normalized[..., np.newaxis][np.newaxis, ...]
 
-        return None
+            pred = self._tf_model.predict(inp, verbose=0)[0]
+            print(f"[INFER] raw prediction (x1,y1,x2,y2) = {[round(float(v),4) for v in pred]} | frame {w}x{h}", file=sys.stderr)
+            # Model outputs 4 normalized values [x1, y1, x2, y2]
+            p1 = (int(pred[0] * w), int(pred[1] * h))
+            # Use P1's Y coordinate for P2 (horizontal alignment, same as MANUAL mode)
+            p2 = (int(pred[2] * w), p1[1])
+            pixel_dist = math.dist(p1, p2)
+
+            if self.pixel_measure:
+                self.pixel_measure.update()
+                _, mm_pp = self.pixel_measure.get_values()
+                mm_pp = mm_pp or DEFAULT_MM_PER_PIXEL
+            else:
+                mm_pp = DEFAULT_MM_PER_PIXEL  # no camera/SDK -> default calibration
+            dist_mm = pixel_dist * mm_pp
+
+            print(f"[INFER] points P1={p1} P2={p2} | pixel_dist={pixel_dist:.1f} | mm/px={mm_pp} | dist_mm={dist_mm:.3f}", file=sys.stderr)
+            return p1, p2, dist_mm
+        except Exception as e:
+            print(f"[INFER] inference FAILED: {type(e).__name__}: {e}", file=sys.stderr)
+            messagebox.showerror("Auto Capture Failed", f"Inference failed:\n{e}")
+            return None
 
     def _compute_distance(self):
         if self.p1 and self.p2:
@@ -1327,9 +1742,16 @@ class MainApp:
         cv2.imwrite(str(orig_path), self.current_frame)
         cv2.imwrite(str(thresh_path), apply_threshold(self.current_frame))
 
-        # Calculate measurement values
+        # Calculate measurement values (use the live SDK mm/pixel when available,
+        # otherwise fall back to the default calibration)
         pixel_distance = math.dist(self.p1, self.p2)
-        measured_mm = pixel_distance * 0.0165  # using default mm_per_pixel
+        if self.pixel_measure:
+            self.pixel_measure.update()
+            _, mm_pp = self.pixel_measure.get_values()
+            mm_pp = mm_pp or DEFAULT_MM_PER_PIXEL
+        else:
+            mm_pp = DEFAULT_MM_PER_PIXEL
+        measured_mm = pixel_distance * mm_pp
 
         # Determine measurement status (assume OKAY unless we have switch tolerance info)
         measurement_status = "okay"
@@ -1369,16 +1791,17 @@ class MainApp:
         self.last_upload_result = None
         if self.api_client:
             result = self.api_client.upload_capture(
-                machine_id=self.machine_name,
+                machine_id=self.machine_id,
                 switch_id=self.selected_switch.get("id", "") if self.selected_switch else "",
                 measured_value_mm=measured_mm,
                 p1_x=self.p1[0],
                 p1_y=self.p1[1],
                 p2_x=self.p2[0],
                 p2_y=self.p2[1],
-                capture_method=self.mode.lower(),
+                capture_method="auto_cnn" if self.mode == "AUTO" else "manual",
                 measurement_status=measurement_status,
                 delta_mm=delta_mm,
+                zoom_level=float(self.zoom),
                 image_original_path=str(orig_path),
                 image_thresholded_path=str(thresh_path)
             )
@@ -1420,6 +1843,7 @@ class MainApp:
             self.p2y_entry.delete(0, tk.END)
             self.p2y_entry.insert(0, str(p1y))
             self._compute_distance()
+            self._evaluate_cable_status()
             self._update_display()
         except ValueError:
             pass
@@ -1462,6 +1886,21 @@ class MainApp:
         except:
             pass
 
+    def _evaluate_cable_status(self):
+        """Compare the current measured distance against the selected switch's
+        tolerance and light the CABLE OK / CABLE NOT OK LED accordingly."""
+        if self.dist_mm is None or not self.selected_switch:
+            self._reset_status_leds()
+            return
+
+        measured_mm = self.dist_mm
+        expected = self.selected_switch.get("expected_diameter_mm", measured_mm)
+        tolerance_min = self.selected_switch.get("tolerance_min", expected - 0.5)
+        tolerance_max = self.selected_switch.get("tolerance_max", expected + 0.5)
+
+        is_ok = tolerance_min <= measured_mm <= tolerance_max
+        self._set_cable_ok(is_ok)
+
     def set_cable_state(self, state):
         """Update cable state display (no cable detected / cable male placed / cable good placed)"""
         self.cable_state = state
@@ -1470,7 +1909,10 @@ class MainApp:
         if self.current_frame is None or not hasattr(self, 'canvas'):
             return
 
-        disp = self.current_frame.copy()
+        # While frozen, always render the captured snapshot (so zoom/pan still
+        # show the held frame and points, not a fresh live frame).
+        source = self.frozen_frame if (self.frozen and self.frozen_frame is not None) else self.current_frame
+        disp = source.copy()
         h, w = disp.shape[:2]
 
         # Apply zoom by cropping and resizing back
@@ -1609,8 +2051,10 @@ class MainApp:
                 frame = cv2.resize(frame, (1280, int(frame.shape[0] * 1280 / frame.shape[1])))
             self.current_frame = frame
 
-            # Only update display every 2 frames (10 FPS display, but 20 FPS camera reads)
-            if self.frame_count % 2 == 0:
+            # Only update display every 2 frames (10 FPS display, but 20 FPS camera reads).
+            # While frozen (after a capture) we keep grabbing frames but hold the
+            # displayed image still so the detected points stay on screen.
+            if self.frame_count % 2 == 0 and not self.frozen:
                 self._update_display()
 
             # Skip SDK calls if zoom is changing (avoid freeze during zoom)
@@ -1756,6 +2200,12 @@ class AdminApp:
         self.current_page = "users"
         self.page_buttons = {}
 
+        # Training state (initialize as empty)
+        self.current_training_model = None
+        self.current_training_samples = 0
+        self.training_start_time = None
+        self.training_active = False
+
         self._build_ui()
 
     def _build_ui(self):
@@ -1789,6 +2239,7 @@ class AdminApp:
         self.clock_lbl = tk.Label(top, text="", bg=PANEL, fg=TEXT2, font=("Arial", 10))
         self.clock_lbl.pack(side=tk.LEFT, padx=10)
         self._update_clock()
+
 
         tk.Frame(top, bg=BORDER, width=1, height=30).pack(side=tk.LEFT, padx=5)
 
@@ -2236,7 +2687,7 @@ class AdminApp:
         header = tk.Frame(table_frame, bg=PANEL)
         header.pack(fill=tk.X)
 
-        cols = [("ANNOTEUR", 16), ("TIME", 14), ("REQUIRED/ACTUAL", 16), ("ZOOM", 8), ("STATUS", 9), ("ACTIONS", 25)]
+        cols = [("ANNOTEUR", 16), ("TIME", 14), ("METHOD", 10), ("REQUIRED/ACTUAL", 16), ("ZOOM", 8), ("STATUS", 9), ("ACTIONS", 25)]
         for col_name, width in cols:
             tk.Label(header, text=col_name, bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold"), width=width, anchor="w").pack(side=tk.LEFT, padx=10, pady=10)
 
@@ -2254,7 +2705,10 @@ class AdminApp:
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
-        pending_captures = [c for c in captures if not c.get("annoteur_approved")]
+        # Stage 2 queue: annoteur has verified these, awaiting admin confirmation
+        # into the training database.
+        pending_captures = [c for c in captures
+                            if c.get("annoteur_approved") and not c.get("in_training_dataset")]
 
         if not pending_captures:
             tk.Label(scrollable_frame, text="No pending requests", bg=BG, fg=TEXT2, font=("Arial", 12)).pack(pady=50)
@@ -2264,11 +2718,21 @@ class AdminApp:
                 row = tk.Frame(scrollable_frame, bg=row_bg)
                 row.pack(fill=tk.X)
 
-                annoteur_id = (capture.get('annoteur_id') or 'Unknown')[:16]
-                tk.Label(row, text=annoteur_id, bg=row_bg, fg=TEXT, font=("Arial", 10), width=16, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+                annoteur_name = capture.get('annoteur_name') or capture.get('annoteur_id') or 'Unassigned'
+                tk.Label(row, text=annoteur_name[:16], bg=row_bg, fg=TEXT, font=("Arial", 10), width=16, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
 
                 created_at = (capture.get('created_at') or '')[:14]
                 tk.Label(row, text=created_at, bg=row_bg, fg=TEXT, font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+                # How the capture was taken: auto_cnn -> AUTO, manual -> MANUAL.
+                method_raw = capture.get('capture_method', '')
+                if method_raw == "auto_cnn":
+                    method_text, method_fg = "AUTO", "#FF9800"    # amber (AI/auto)
+                elif method_raw == "manual":
+                    method_text, method_fg = "MANUAL", "#607D8B"  # blue-grey (human)
+                else:
+                    method_text, method_fg = "—", TEXT2
+                tk.Label(row, text=method_text, bg=row_bg, fg=method_fg, font=("Arial", 10, "bold"), width=10, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
 
                 expected = capture.get('expected_diameter_mm') or 0
                 actual = capture.get('measured_distance_mm', 0)
@@ -2344,10 +2808,21 @@ class AdminApp:
         p2_x = capture.get('p2_x', 0)
         p2_y = capture.get('p2_y', 0)
 
+        capture_id = capture.get('id')
         try:
-            if Path(orig_path).exists():
+            # Prefer downloading from the server (works across machines).
+            if capture_id and self.api_client:
+                orig_bytes = self.api_client.get_capture_image(capture_id, kind="original")
+                if orig_bytes:
+                    state["original_image"] = Image.open(io.BytesIO(orig_bytes)).convert('RGB')
+                thresh_bytes = self.api_client.get_capture_image(capture_id, kind="thresholded")
+                if thresh_bytes:
+                    state["thresholded_image"] = Image.open(io.BytesIO(thresh_bytes)).convert('RGB')
+
+            # Fallback to local copies on the same machine.
+            if not state["original_image"] and Path(orig_path).exists():
                 state["original_image"] = Image.open(orig_path).convert('RGB')
-            if Path(thresh_path).exists():
+            if not state["thresholded_image"] and Path(thresh_path).exists():
                 state["thresholded_image"] = Image.open(thresh_path).convert('RGB')
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load images: {e}")
@@ -2552,56 +3027,15 @@ class AdminApp:
         # Title
         tk.Label(frame, text="APPROVED DATASET", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
 
-        # Tab buttons
-        tab_frame = tk.Frame(frame, bg=BG)
-        tab_frame.pack(fill=tk.X, pady=(0, 20))
-
         cached = self.cache.get("captures")
-        # Show all approved captures in MESURE (model_type field removed from schema)
-        mesure_count = len([c for c in cached if c.get("annoteur_approved")]) if cached else 0
-        state_count = 0  # STATE annotations managed separately
+        # Show captures the admin has confirmed into the training database.
+        mesure_captures = [c for c in cached if c.get("in_training_dataset")] if cached else []
 
-        tab_state = {"current": "mesure"}
-
-        mesure_btn = tk.Button(tab_frame, text=f"MESURE ({mesure_count})", font=("Arial", 10, "bold"),
-                              bg=ACCENT, fg="#FFFFFF", relief=tk.FLAT, bd=0, padx=20, pady=8)
-        mesure_btn.pack(side=tk.LEFT, padx=(0, 10))
-
-        state_btn = tk.Button(tab_frame, text=f"STATE ({state_count})", font=("Arial", 10, "bold"),
-                             bg=PANEL, fg=TEXT2, relief=tk.FLAT, bd=0, padx=20, pady=8)
-        state_btn.pack(side=tk.LEFT)
-
-        # Content frames for each tab
         mesure_frame = tk.Frame(frame, bg=BG)
         mesure_frame.pack(fill=tk.BOTH, expand=True)
 
-        state_frame = tk.Frame(frame, bg=BG)
-
-        def switch_tab(model_type):
-            tab_state["current"] = model_type
-            if model_type == "mesure":
-                state_frame.pack_forget()
-                mesure_frame.pack(fill=tk.BOTH, expand=True)
-                mesure_btn.configure(bg=ACCENT, fg="#FFFFFF")
-                state_btn.configure(bg=PANEL, fg=TEXT2)
-            else:
-                mesure_frame.pack_forget()
-                state_frame.pack(fill=tk.BOTH, expand=True)
-                mesure_btn.configure(bg=PANEL, fg=TEXT2)
-                state_btn.configure(bg=ACCENT, fg="#FFFFFF")
-
-        mesure_btn.configure(command=lambda: switch_tab("mesure"))
-        state_btn.configure(command=lambda: switch_tab("state"))
-
-        # Build tables for each model
-        # Show all approved captures in MESURE (model_type field removed from schema)
-        mesure_captures = [c for c in cached if c.get("annoteur_approved")] if cached else []
-        state_captures = []  # STATE annotations managed separately
-
         self._build_dataset_table(mesure_frame, mesure_captures)
-        self._build_dataset_table(state_frame, state_captures)
-
-        self._sync_dataset(mesure_frame, state_frame, mesure_btn, state_btn, cached, tab_state)
+        self._sync_dataset(mesure_frame, cached)
 
     def _build_dataset_table(self, frame, captures):
         table_frame = tk.Frame(frame, bg=BORDER, relief=tk.SUNKEN, bd=1)
@@ -2639,8 +3073,8 @@ class AdminApp:
                 row._capture_id = capture.get("id")  # Store ID for deletion
                 row.pack(fill=tk.X)
 
-                annoteur_id = (capture.get('annoteur_id') or 'Unknown')[:16]
-                tk.Label(row, text=annoteur_id, bg=row_bg, fg=TEXT, font=("Arial", 10), width=16, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+                annoteur_name = capture.get('annoteur_name') or capture.get('annoteur_id') or 'Unassigned'
+                tk.Label(row, text=annoteur_name[:16], bg=row_bg, fg=TEXT, font=("Arial", 10), width=16, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
 
                 created_at = (capture.get('created_at') or '')[:14]
                 tk.Label(row, text=created_at, bg=row_bg, fg=TEXT, font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
@@ -2673,7 +3107,7 @@ class AdminApp:
         canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
 
-    def _sync_dataset(self, mesure_frame, state_frame, mesure_btn, state_btn, cached, tab_state):
+    def _sync_dataset(self, mesure_frame, cached):
         if not self.cache.is_stale("captures"):
             return
         def do_sync():
@@ -2682,26 +3116,12 @@ class AdminApp:
                 server_data = result.get("data", [])
                 merged = self.cache.update("captures", server_data)
                 if merged != cached:
-                    # Clear and rebuild both frames
                     for w in mesure_frame.winfo_children():
                         if getattr(w, '_is_table', False):
                             w.destroy()
-                    for w in state_frame.winfo_children():
-                        if getattr(w, '_is_table', False):
-                            w.destroy()
-
-                    # Show all approved captures in MESURE (model_type field removed from schema)
-                    mesure_captures = [c for c in merged if c.get("annoteur_approved")]
-                    state_captures = []  # STATE annotations managed separately
-
-                    # Update button counts
-                    mesure_count = len(mesure_captures)
-                    state_count = len(state_captures)
-                    mesure_btn.configure(text=f"MESURE ({mesure_count})")
-                    state_btn.configure(text=f"STATE ({state_count})")
-
+                    # Show captures the admin has confirmed into the training database.
+                    mesure_captures = [c for c in merged if c.get("in_training_dataset")]
                     self._build_dataset_table(mesure_frame, mesure_captures)
-                    self._build_dataset_table(state_frame, state_captures)
         self.root.after(0, do_sync)
 
     def _delete_dataset_capture(self, capture_id):
@@ -2813,13 +3233,31 @@ class AdminApp:
                 view_btn.pack(side=tk.LEFT, padx=4)
                 add_hover_effect(view_btn, ACCENT, "#8B0F15", "#FFFFFF")
 
-                reply_btn = tk.Button(action_frame, text="↩ Reply", command=lambda notif_title=notif.get('title'): self._show_reply_dialog(notif_title),
-                                     bg=GREEN, fg="#FFFFFF", font=("Arial", 9, "bold"), relief=tk.FLAT, bd=0, padx=10, pady=4)
-                reply_btn.pack(side=tk.LEFT, padx=4)
-                add_hover_effect(reply_btn, GREEN, "#388E3C", "#FFFFFF")
+                delete_btn = tk.Button(action_frame, text="✕", command=lambda nid=notif.get('id'): self._delete_notification(nid, frame),
+                                     bg=RED, fg="#FFFFFF", font=("Arial", 9, "bold"), relief=tk.FLAT, bd=0, padx=12, pady=4)
+                delete_btn.pack(side=tk.LEFT, padx=4)
+                add_hover_effect(delete_btn, RED, "#8B0F15", "#FFFFFF")
 
         canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
+
+    def _delete_notification(self, notif_id, frame):
+        """Delete a notification from the server and refresh the table."""
+        if not notif_id:
+            return
+        if not messagebox.askyesno("Delete Notification", "Delete this notification? This cannot be undone."):
+            return
+        result = self.api_client.delete_notification(notif_id)
+        if result and result.get("ok"):
+            updated = [n for n in (self.cache.get("notifications") or []) if n.get("id") != notif_id]
+            self.cache.update("notifications", updated)
+            for w in frame.winfo_children():
+                if getattr(w, '_is_table', False):
+                    w.destroy()
+            self._build_notifications_table(frame, updated)
+        else:
+            error = result.get("error", "Unknown error") if result else "No response from server"
+            messagebox.showerror("Error", f"Failed to delete notification: {error}")
 
     def _sync_notifications(self, frame, cached):
         if not self.cache.is_stale("notifications"):
@@ -3263,6 +3701,233 @@ class AdminApp:
             else:
                 messagebox.showerror("Error", result.get("error", "Failed to delete switch"))
 
+    def _show_model_details(self, model_type):
+        """Show detailed model metrics in a dialog"""
+        metadata = self._load_model_metadata(model_type)
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"{model_type.upper()} Model Details")
+        dialog.geometry("500x500")
+        dialog.configure(bg=BG)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        frame = tk.Frame(dialog, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Title
+        tk.Label(frame, text=f"📊 {model_type.upper()} Model Metrics", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        # Metrics frame
+        metrics_frame = tk.Frame(frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
+        metrics_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
+
+        # Build metric display based on model type
+        metrics_list = []
+        if model_type == "mesure":
+            metrics_list = [
+                ("Model Name", metadata.get("model_name", "—")),
+                ("Status", metadata.get("status", "—").upper()),
+                ("", ""),  # Spacer
+                ("ACCURACY METRICS", ""),
+                ("10px Accuracy", f"{metadata.get('accuracy_10px', 0):.2%}"),
+                ("20px Accuracy", f"{metadata.get('accuracy_20px', 0):.2%}"),
+                ("", ""),  # Spacer
+                ("LOSS METRICS", ""),
+                ("Test Loss (MSE)", f"{metadata.get('test_loss', 0):.6f}"),
+                ("Test MAE", f"{metadata.get('test_mae', 0):.6f}"),
+                ("Mean Pixel Error", f"{metadata.get('mean_pixel_error', 0):.4f} px"),
+                ("", ""),  # Spacer
+                ("TRAINING INFO", ""),
+                ("Epochs Trained", str(metadata.get("epochs_trained", 0))),
+                ("Training Samples", str(metadata.get("training_samples", 0))),
+                ("Test Samples", str(metadata.get("test_samples", 0))),
+            ]
+        else:  # state
+            metrics_list = [
+                ("Model Name", metadata.get("model_name", "—")),
+                ("Status", metadata.get("status", "—").upper()),
+                ("", ""),  # Spacer
+                ("ACCURACY METRICS", ""),
+                ("Overall Accuracy", f"{metadata.get('overall_accuracy', 0):.2%}"),
+                ("Precision", f"{metadata.get('precision', 0):.4f}"),
+                ("Recall", f"{metadata.get('recall', 0):.4f}"),
+                ("F1 Score", f"{metadata.get('f1_score', 0):.4f}"),
+                ("", ""),  # Spacer
+                ("LOSS METRICS", ""),
+                ("Test Loss", f"{metadata.get('test_loss', 0):.6f}"),
+                ("", ""),  # Spacer
+                ("TRAINING INFO", ""),
+                ("Epochs Trained", str(metadata.get("epochs_trained", 0))),
+                ("Training Samples", str(metadata.get("training_samples", 0))),
+                ("Test Samples", str(metadata.get("test_samples", 0))),
+            ]
+
+        # Display metrics
+        canvas = tk.Canvas(metrics_frame, bg=PANEL, highlightthickness=0)
+        scrollbar = tk.Scrollbar(metrics_frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=PANEL)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        for metric_name, metric_value in metrics_list:
+            if not metric_name:  # Spacer
+                tk.Frame(scrollable_frame, bg=PANEL, height=5).pack(fill=tk.X)
+                continue
+
+            row = tk.Frame(scrollable_frame, bg=PANEL)
+            row.pack(fill=tk.X, padx=10, pady=5)
+
+            if metric_value == "":  # Section header
+                tk.Label(row, text=metric_name, bg=PANEL, fg=ACCENT, font=("Arial", 10, "bold")).pack(anchor=tk.W)
+            else:
+                tk.Label(row, text=metric_name, bg=PANEL, fg=TEXT2, font=("Arial", 9)).pack(anchor=tk.W)
+                tk.Label(row, text=str(metric_value), bg=PANEL, fg=GREEN, font=("Arial", 9, "bold")).pack(anchor=tk.E, padx=20)
+
+        canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
+
+        # Close button
+        close_btn = tk.Button(frame, text="CLOSE", command=dialog.destroy, bg=PANEL, fg=TEXT, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=20, pady=10)
+        close_btn.pack(side=tk.LEFT)
+        add_hover_effect(close_btn, PANEL, SEP, TEXT)
+
+    def _show_settings_dialog(self):
+        """Show settings dialog for Google Drive and upload configuration"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Settings")
+        dialog.geometry("700x500")
+        dialog.configure(bg=BG)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        frame = tk.Frame(dialog, bg=BG)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        tk.Label(frame, text="⚙ Settings", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        # Load current config
+        config_file = Path(__file__).parent / "config.json"
+        config = {}
+        if config_file.exists():
+            try:
+                config = json.loads(config_file.read_text())
+            except:
+                pass
+
+        # Google Drive Settings
+        tk.Label(frame, text="☁ Google Drive Configuration", bg=BG, fg=TEXT, font=("Arial", 11, "bold")).pack(anchor=tk.W, pady=(10, 5))
+
+        drive_frame = tk.Frame(frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
+        drive_frame.pack(fill=tk.X, padx=5, pady=(0, 20))
+
+        # Credentials path section
+        tk.Label(drive_frame, text="Credentials File Path:", bg=PANEL, fg=TEXT2, font=("Arial", 9)).pack(anchor=tk.W, padx=10, pady=(10, 5))
+
+        path_frame = tk.Frame(drive_frame, bg=PANEL)
+        path_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+        creds_path_var = tk.StringVar(value=config.get('google_drive', {}).get('credentials_path', ''))
+        creds_entry = tk.Entry(path_frame, font=("Arial", 9), bg="#2A2E3A", fg=TEXT, relief=tk.FLAT, bd=1)
+        creds_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        creds_entry.insert(0, creds_path_var.get())
+
+        def browse_credentials():
+            file_path = filedialog.askopenfilename(
+                title="Select Google Credentials JSON",
+                filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+                initialdir=str(Path(__file__).parent)
+            )
+            if file_path:
+                creds_entry.delete(0, tk.END)
+                creds_entry.insert(0, file_path)
+                creds_path_var.set(file_path)
+
+        browse_btn = tk.Button(path_frame, text="📁 Browse", command=browse_credentials,
+                              bg=ACCENT, fg="#FFFFFF", font=("Arial", 8, "bold"),
+                              relief=tk.FLAT, bd=0, padx=12, pady=5)
+        browse_btn.pack(side=tk.LEFT)
+        add_hover_effect(browse_btn, ACCENT, "#5A5F75", "#FFFFFF")
+
+        # Enable checkbox
+        enable_var = tk.BooleanVar(value=config.get('google_drive', {}).get('enabled', False))
+        enable_cb = tk.Checkbutton(drive_frame, text="Enable Google Drive auto-upload", variable=enable_var,
+                                  bg=PANEL, fg=TEXT2, font=("Arial", 9), selectcolor="#1A1E2A", activebackground=PANEL)
+        enable_cb.pack(anchor=tk.W, padx=10, pady=(0, 10))
+
+        # Status info
+        status_frame = tk.Frame(drive_frame, bg="#1A1E2A", relief=tk.SUNKEN, bd=1)
+        status_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+        def update_status():
+            creds_file = Path(creds_entry.get())
+            if creds_file.exists():
+                status_text = f"✓ Credentials file found\n{creds_file.name}"
+                status_color = GREEN
+            else:
+                status_text = "✗ Credentials file not found\nPlease select a valid file"
+                status_color = RED
+
+            status_label.config(text=status_text, fg=status_color)
+
+        status_label = tk.Label(status_frame, text="", bg="#1A1E2A", fg=TEXT2, font=("Arial", 8), justify=tk.LEFT)
+        status_label.pack(anchor=tk.W, padx=10, pady=10)
+        update_status()
+
+        # Help text
+        help_text = """How to get credentials:
+1. Go to https://console.cloud.google.com
+2. Create project → Enable Drive API
+3. Create OAuth 2.0 Desktop credentials
+4. Download JSON → Select it here"""
+
+        tk.Label(frame, text=help_text, bg=BG, fg=TEXT2, font=("Arial", 8), justify=tk.LEFT).pack(anchor=tk.W, pady=(10, 20))
+
+        # Buttons
+        btn_frame = tk.Frame(frame, bg=BG)
+        btn_frame.pack(fill=tk.X)
+
+        cancel_btn = tk.Button(btn_frame, text="CANCEL", command=dialog.destroy,
+                              bg=PANEL, fg=TEXT, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=20, pady=10)
+        cancel_btn.pack(side=tk.LEFT, padx=(0, 10))
+        add_hover_effect(cancel_btn, PANEL, SEP, TEXT)
+
+        def save_settings():
+            creds_path = creds_entry.get().strip()
+
+            # Validate
+            if enable_var.get() and creds_path:
+                creds_file = Path(creds_path)
+                if not creds_file.exists():
+                    messagebox.showerror("Error", "Credentials file does not exist!")
+                    return
+
+            # Save config
+            config_file = Path(__file__).parent / "config.json"
+            config = {
+                "google_drive": {
+                    "credentials_path": creds_path,
+                    "enabled": enable_var.get()
+                },
+                "upload_method": "google_drive" if enable_var.get() else "manual",
+                "models_upload_folder": "uploads"
+            }
+
+            config_file.write_text(json.dumps(config, indent=2))
+            messagebox.showinfo("Success", "✓ Settings saved!\n\nGoogle Drive is " + ("enabled" if enable_var.get() else "disabled"))
+            dialog.destroy()
+
+        save_btn = tk.Button(btn_frame, text="💾 SAVE SETTINGS", command=save_settings,
+                            bg=GREEN, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=20, pady=10)
+        save_btn.pack(side=tk.LEFT)
+        add_hover_effect(save_btn, GREEN, "#388E3C", "#FFFFFF")
+
     def _load_model_metadata(self, model_type="mesure"):
         """Load model metadata from JSON file, return default if not found"""
         metadata_path = MODELS_MESURE_DIR / f"{model_type}_metadata.json"
@@ -3317,7 +3982,6 @@ class AdminApp:
             dataset_captures = self.cache.get("captures")
 
         mesure_dataset = len([c for c in dataset_captures if c.get("annoteur_approved") and c.get("model_type") == "mesure"]) if dataset_captures else 0
-        state_dataset = len([c for c in dataset_captures if c.get("annoteur_approved") and c.get("model_type") == "state"]) if dataset_captures else 0
 
         # Check for actual model files and track versions
         model_dir = MODELS_MESURE_DIR
@@ -3330,17 +3994,8 @@ class AdminApp:
         mesure_latest_version = 2 if mesure_v2_exists else (1 if mesure_v1_exists else 0)
         mesure_exists = mesure_latest_version > 0
 
-        # STATE model versions
-        state_model_v1 = model_dir / "CNN_BELMOUNTH_STATE_V1.h5"
-        state_model_v2 = model_dir / "CNN_BELMOUNTH_STATE_V2.h5"
-        state_v1_exists = state_model_v1.exists()
-        state_v2_exists = state_model_v2.exists()
-        state_latest_version = 2 if state_v2_exists else (1 if state_v1_exists else 0)
-        state_exists = state_latest_version > 0
-
         # Load metadata for latest version
         mesure_metadata = self._load_model_metadata("mesure") if mesure_exists else {"model_name": f"CNN_BELMOUNTH_MESURE_V{mesure_latest_version}"}
-        state_metadata = self._load_model_metadata("state") if state_exists else {"model_name": f"CNN_BELMOUNTH_STATE_V{state_latest_version}"}
 
         # Create table
         table_frame = tk.Frame(frame, bg=BORDER, relief=tk.SUNKEN, bd=1)
@@ -3368,15 +4023,22 @@ class AdminApp:
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
-        # Models data
-        models_data = [
-            ("MESURE", "Keypoint Detection", "TRAINED" if mesure_exists else "NOT TRAINED",
-             f"V{mesure_latest_version}" if mesure_exists else "—", f"{mesure_dataset}/499", "mesure", mesure_latest_version, mesure_exists, mesure_v1_exists, mesure_v2_exists),
-            ("STATE", "Cable Classification", "TRAINED" if state_exists else "NOT TRAINED",
-             f"V{state_latest_version}" if state_exists else "—", f"{state_dataset}/500", "state", state_latest_version, state_exists, state_v1_exists, state_v2_exists),
-        ]
+        # Build models data - show each version as separate row
+        models_data = []
+        row_count = 0
 
-        for i, (model_name, model_type, status, version, dataset, model_id, latest_ver, exists, v1_ex, v2_ex) in enumerate(models_data):
+        # MESURE versions
+        if mesure_v1_exists:
+            models_data.append(("MESURE", "Keypoint Detection", "TRAINED", "V1", f"{mesure_dataset}/499", "mesure", 1, mesure_latest_version, True))
+            row_count += 1
+        if mesure_v2_exists:
+            models_data.append(("MESURE", "Keypoint Detection", "TRAINED ✦", "V2", f"{mesure_dataset}/499", "mesure", 2, mesure_latest_version, True))
+            row_count += 1
+        if not mesure_exists:
+            models_data.append(("MESURE", "Keypoint Detection", "NOT TRAINED", "—", f"{mesure_dataset}/499", "mesure", 0, 0, False))
+            row_count += 1
+
+        for i, (model_name, model_type, status, version, dataset, model_id, ver_num, latest_ver, exists) in enumerate(models_data):
             row_bg = PANEL if i % 2 == 0 else BG
             row = tk.Frame(scrollable_frame, bg=row_bg)
             row.pack(fill=tk.X)
@@ -3387,7 +4049,7 @@ class AdminApp:
             # Type
             tk.Label(row, text=model_type, bg=row_bg, fg=TEXT2, font=("Arial", 9), width=12, anchor="w").pack(side=tk.LEFT, padx=5, pady=8)
 
-            # Status
+            # Status (✦ marks latest version)
             status_color = GREEN if "TRAINED" in status else AMBER
             tk.Label(row, text=status, bg=row_bg, fg=status_color, font=("Arial", 9, "bold"), width=12, anchor="w").pack(side=tk.LEFT, padx=5, pady=8)
 
@@ -3395,7 +4057,7 @@ class AdminApp:
             tk.Label(row, text=version, bg=row_bg, fg=TEXT, font=("Arial", 9), width=10, anchor="w").pack(side=tk.LEFT, padx=5, pady=8)
 
             # Dataset
-            limit = 499 if model_id == "mesure" else 500
+            limit = 499
             dataset_color = GREEN if "/" in dataset and int(dataset.split("/")[0]) >= limit else TEXT
             tk.Label(row, text=dataset, bg=row_bg, fg=dataset_color, font=("Arial", 9), width=12, anchor="w").pack(side=tk.LEFT, padx=5, pady=8)
 
@@ -3404,21 +4066,42 @@ class AdminApp:
             action_frame.pack(side=tk.LEFT, padx=5, pady=8)
 
             if exists:
-                upgrade_btn = tk.Button(action_frame, text=f"🔄 Upgrade", font=("Arial", 8, "bold"),
-                                       command=lambda m=model_id, d=(mesure_dataset if model_id == "mesure" else state_dataset), v=latest_ver: self._upgrade_model_dialog(m, d, v),
-                                       bg=GREEN, fg="#FFFFFF", relief=tk.FLAT, bd=0, padx=8, pady=3)
-                upgrade_btn.pack(side=tk.LEFT, padx=2)
-                add_hover_effect(upgrade_btn, GREEN, "#388E3C", "#FFFFFF")
+                details_btn = tk.Button(action_frame, text="📊 Details", font=("Arial", 8, "bold"),
+                                       command=lambda m=model_id: self._show_model_details(m),
+                                       bg=ACCENT, fg="#FFFFFF", relief=tk.FLAT, bd=0, padx=8, pady=3)
+                details_btn.pack(side=tk.LEFT, padx=2)
+                add_hover_effect(details_btn, ACCENT, "#5A5F75", "#FFFFFF")
 
-                if v1_ex and v2_ex:
-                    delete_btn = tk.Button(action_frame, text="🗑 V1", font=("Arial", 8, "bold"),
-                                          command=lambda m=model_id: self._delete_model_version(m, 1),
-                                          bg=RED, fg="#FFFFFF", relief=tk.FLAT, bd=0, padx=8, pady=3)
-                    delete_btn.pack(side=tk.LEFT, padx=2)
-                    add_hover_effect(delete_btn, RED, "#8B0F15", "#FFFFFF")
+                # Only show upgrade button on latest version
+                if ver_num == latest_ver:
+                    new_samples_count = self._count_new_samples(model_id)
+                    upgrade_enabled = new_samples_count >= 500
+                    upgrade_state = tk.NORMAL if upgrade_enabled else tk.DISABLED
+                    upgrade_text = f"🔄 Upgrade" if upgrade_enabled else f"🔄 +{500-new_samples_count}"
+
+                    upgrade_btn = tk.Button(action_frame, text=upgrade_text, font=("Arial", 8, "bold"),
+                                           command=lambda m=model_id, d=mesure_dataset, v=latest_ver, n=new_samples_count: self._upgrade_model_dialog(m, d, v, n),
+                                           bg=GREEN, fg="#FFFFFF", relief=tk.FLAT, bd=0, padx=8, pady=3, state=upgrade_state)
+                    upgrade_btn.pack(side=tk.LEFT, padx=2)
+                    if upgrade_enabled:
+                        add_hover_effect(upgrade_btn, GREEN, "#388E3C", "#FFFFFF")
+
+                # Export button for each version
+                export_btn = tk.Button(action_frame, text=f"📥 Export", font=("Arial", 8, "bold"),
+                                      command=lambda m=model_id, v=ver_num, n=model_name: self._export_single_model(m, v, n),
+                                      bg=ACCENT, fg="#FFFFFF", relief=tk.FLAT, bd=0, padx=8, pady=3)
+                export_btn.pack(side=tk.LEFT, padx=2)
+                add_hover_effect(export_btn, ACCENT, "#5A5F75", "#FFFFFF")
+
+                # Delete button for each version
+                delete_btn = tk.Button(action_frame, text=f"🗑 Delete", font=("Arial", 8, "bold"),
+                                      command=lambda m=model_id, v=ver_num: self._delete_model_version(m, v),
+                                      bg=RED, fg="#FFFFFF", relief=tk.FLAT, bd=0, padx=8, pady=3)
+                delete_btn.pack(side=tk.LEFT, padx=2)
+                add_hover_effect(delete_btn, RED, "#8B0F15", "#FFFFFF")
             else:
-                dataset_val = mesure_dataset if model_id == "mesure" else state_dataset
-                limit = 499 if model_id == "mesure" else 500
+                dataset_val = mesure_dataset
+                limit = 499
                 if dataset_val < limit:
                     tk.Label(action_frame, text=f"⚠ Need {limit - dataset_val}", fg=RED, bg=row_bg, font=("Arial", 8)).pack(side=tk.LEFT, padx=2)
                 else:
@@ -3431,15 +4114,16 @@ class AdminApp:
         canvas.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         scrollbar.pack(fill=tk.Y, side=tk.RIGHT)
 
-        # Send button
+        # Send/Export buttons
         button_frame = tk.Frame(frame, bg=BG)
         button_frame.pack(fill=tk.X, pady=(20, 0))
 
         send_btn = tk.Button(button_frame, text="🚀 SEND MODELS TO MACHINES",
-                            command=lambda: self._deploy_models_dialog(mesure_exists, state_exists, mesure_latest_version, state_latest_version),
+                            command=lambda: self._send_models_to_machines_dialog(mesure_exists, mesure_latest_version),
                             bg=ACCENT, fg="#FFFFFF", font=("Arial", 11, "bold"), relief=tk.FLAT, bd=0, padx=20, pady=10)
-        send_btn.pack(side=tk.LEFT)
+        send_btn.pack(side=tk.LEFT, padx=(0, 10))
         add_hover_effect(send_btn, ACCENT, "#8B0F15", "#FFFFFF")
+
 
     def _show_training_page(self):
         """Display training status and progress"""
@@ -3449,6 +4133,34 @@ class AdminApp:
         # Header
         tk.Label(frame, text="◉  MODEL TRAINING", bg=BG, fg=TEXT, font=("Arial", 16, "bold")).pack(anchor=tk.W, pady=(0, 20))
 
+        # Determine whether a training session is actually running
+        training_active = getattr(self, 'training_active', False) and getattr(self, 'current_training_samples', 0) > 0
+
+        # Empty state: nothing is training yet
+        if not training_active:
+            empty_frame = tk.Frame(frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
+            empty_frame.pack(fill=tk.X, pady=(0, 20))
+
+            tk.Label(empty_frame, text="◌  No model is currently training", bg=PANEL, fg=TEXT,
+                    font=("Arial", 13, "bold")).pack(anchor=tk.W, padx=20, pady=(20, 8))
+            tk.Label(empty_frame,
+                    text="No training session is active right now.\n\n"
+                         "To start training a model:\n"
+                         "1. Go to the MODEL section\n"
+                         "2. Click CREATE & TRAIN\n"
+                         "3. Confirm — progress will appear here.",
+                    bg=PANEL, fg=TEXT2, font=("Arial", 10), justify=tk.LEFT, wraplength=600).pack(anchor=tk.W, padx=20, pady=(0, 20))
+
+            btn_frame = tk.Frame(frame, bg=BG)
+            btn_frame.pack(fill=tk.X, pady=(10, 0))
+            go_to_model = tk.Button(btn_frame, text="Go to MODEL Section",
+                                    command=lambda: self._switch_page("model", self._show_model_page),
+                                    bg=ACCENT, fg="#FFFFFF", font=("Arial", 10, "bold"),
+                                    relief=tk.FLAT, bd=0, padx=20, pady=10)
+            go_to_model.pack(side=tk.LEFT)
+            add_hover_effect(go_to_model, ACCENT, "#8B0F15", "#FFFFFF")
+            return
+
         # Training info box
         info_frame = tk.Frame(frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
         info_frame.pack(fill=tk.X, pady=(0, 20))
@@ -3456,13 +4168,10 @@ class AdminApp:
         info_text = """
 📊 TRAINING STATUS
 
-No active training session.
+A training session is in progress.
 
-To start training a model:
-1. Go to MODEL section
-2. Click CREATE & TRAIN button
-3. Select mesure or state model
-4. Confirm - training will start here
+You can monitor live progress below. Use CANCEL TRAINING to stop the
+current session, or return to the MODEL section.
 
 ⏱ Training typically takes 5-30 minutes depending on dataset size.
         """
@@ -3475,6 +4184,10 @@ To start training a model:
         progress_frame = tk.Frame(frame, bg=PANEL, relief=tk.SUNKEN, bd=1)
         progress_frame.pack(fill=tk.X, pady=(0, 5), padx=5)
 
+        # Epoch counter
+        epoch_label = tk.Label(progress_frame, text="Epoch: 0/30  |  Train Loss: --  |  Val Loss: --", bg=PANEL, fg=GREEN, font=("Arial", 10, "bold"))
+        epoch_label.pack(anchor=tk.W, padx=10, pady=(10, 5))
+
         # Progress bar
         progress_bar = tk.Canvas(progress_frame, bg="#E0E0E0", height=30, highlightthickness=0)
         progress_bar.pack(fill=tk.X, padx=1, pady=1)
@@ -3482,24 +4195,41 @@ To start training a model:
         # Progress fill (0%)
         progress_fill = progress_bar.create_rectangle(0, 0, 0, 30, fill=GREEN, outline=GREEN)
 
-        def update_progress(percent):
-            if percent < 0:
-                percent = 0
-            if percent > 100:
-                percent = 100
-            width = progress_bar.winfo_width()
-            if width <= 1:
-                width = 600
-            fill_width = (width - 2) * (percent / 100)
-            progress_bar.coords(progress_fill, 0, 0, fill_width, 30)
-            percent_label.config(text=f"{percent}%")
+        def update_progress(percent, epoch=None, train_loss=None, val_loss=None):
+            try:
+                if percent < 0:
+                    percent = 0
+                if percent > 100:
+                    percent = 100
+                width = progress_bar.winfo_width()
+                if width <= 1:
+                    width = 600
+                fill_width = (width - 2) * (percent / 100)
+                progress_bar.coords(progress_fill, 0, 0, fill_width, 30)
+                percent_label.config(text=f"{percent}%")
 
-            # Calculate and update samples processed
-            if dataset_size > 0:
-                samples_processed = int((dataset_size * percent) / 100)
-                self.training_time_updater(dataset_size, percent, samples_processed)
+                # Update epoch and loss display
+                if epoch is not None:
+                    loss_text = f"Epoch: {epoch}/30"
+                    if train_loss is not None:
+                        loss_text += f"  |  Train Loss: {train_loss:.5f}"
+                    if val_loss is not None:
+                        loss_text += f"  |  Val Loss: {val_loss:.5f}"
+                    epoch_label.config(text=loss_text)
+                    print(f"[PROGRESS] {loss_text}", file=sys.stderr)
 
-            progress_bar.update()
+                # Calculate and update samples processed
+                if dataset_size > 0:
+                    samples_processed = int((dataset_size * percent) / 100)
+                    try:
+                        self.training_time_updater(dataset_size, percent, samples_processed)
+                    except:
+                        pass
+
+                progress_bar.update()
+            except Exception as e:
+                print(f"[ERROR in update_progress] {type(e).__name__}: {e}", file=sys.stderr)
+                pass
 
         # Bind the canvas to update on window resize
         progress_bar.bind("<Configure>", lambda e: update_progress(0))
@@ -3595,8 +4325,12 @@ To start training a model:
     def _train_model_real(self):
         """Start REAL model training using the dataset"""
         import threading
+        import traceback
 
         def train_worker():
+            print("\n" + "=" * 80, file=sys.stderr)
+            print("TRAINING STARTED", file=sys.stderr)
+            print("=" * 80, file=sys.stderr)
             try:
                 model_type = getattr(self, 'current_training_model', 'mesure')
                 dataset_count = getattr(self, 'current_training_samples', 100)
@@ -3622,17 +4356,34 @@ To start training a model:
                 y = []
 
                 for ann in annotations[:dataset_count]:
-                    img_path = Path(ann.get("image_path", ""))
+                    # Try original_path first (from our dataset), then fallback to image_path
+                    img_path = Path(ann.get("original_path", ann.get("image_path", "")))
                     if not img_path.is_absolute():
-                        img_path = ORIG_DIR / img_path.name
+                        img_path = ORIG_DIR / ann.get("filename", "")
 
                     if img_path.exists():
-                        img = Image.open(img_path).convert('L')
-                        img = img.resize((640, 480))
-                        img_array = np.array(img, dtype=np.float32) / 255.0
+                        bgr = cv2.imread(str(img_path))
+                        if bgr is None:
+                            continue
+                        # Threshold so training input matches what the model sees
+                        # at inference time (apply_threshold), then resize to 640x480.
+                        thresh = apply_threshold(bgr)
+                        resized = cv2.resize(thresh, (640, 480))
+                        img_array = resized.astype(np.float32) / 255.0
 
-                        # Get keypoints (normalized)
-                        keypoints = ann.get("keypoints", [0, 0, 0, 0])
+                        # Convert stored absolute points -> normalized [x1, y1, x2, y2].
+                        # The labels live under "points", NOT "keypoints".
+                        points = ann.get("points", [])
+                        if len(points) < 2:
+                            continue
+                        aw = ann.get("width", 640) or 640
+                        ah = ann.get("height", 480) or 480
+                        keypoints = [
+                            points[0].get("x", 0) / aw,
+                            points[0].get("y", 0) / ah,
+                            points[1].get("x", 0) / aw,
+                            points[1].get("y", 0) / ah,
+                        ]
                         X.append(img_array)
                         y.append(keypoints)
 
@@ -3675,11 +4426,17 @@ To start training a model:
                 class ProgressCallback(tf.keras.callbacks.Callback):
                     def on_epoch_end(self, epoch, logs=None):
                         pct = int((epoch + 1) / self.params['epochs'] * 100)
+                        print(f"[CALLBACK] Epoch {epoch+1}, pct={pct}, logs={logs}", file=sys.stderr)
                         if hasattr(self, 'app') and hasattr(self.app, 'current_progress_updater'):
                             try:
-                                self.app.current_progress_updater(pct)
-                            except:
-                                pass
+                                train_loss = logs.get('loss') if logs else None
+                                val_loss = logs.get('val_loss') if logs else None
+                                print(f"[CALLBACK] Calling updater: pct={pct}, epoch={epoch+1}, train_loss={train_loss}, val_loss={val_loss}", file=sys.stderr)
+                                self.app.current_progress_updater(pct, epoch=epoch + 1, train_loss=train_loss, val_loss=val_loss)
+                            except Exception as e:
+                                print(f"[CALLBACK ERROR] {type(e).__name__}: {e}", file=sys.stderr)
+                        else:
+                            print(f"[CALLBACK] App or updater not set", file=sys.stderr)
 
                 progress_cb = ProgressCallback()
                 progress_cb.app = self
@@ -3688,10 +4445,9 @@ To start training a model:
                 history = model.fit(
                     X_train, y_train,
                     validation_split=0.1,
-                    epochs=150,
+                    epochs=30,
                     batch_size=16,
                     callbacks=[
-                        tf.keras.callbacks.EarlyStopping(patience=20, restore_best_weights=True, verbose=0),
                         progress_cb
                     ],
                     verbose=0
@@ -3700,26 +4456,300 @@ To start training a model:
                 # Evaluate
                 test_loss, test_mae = model.evaluate(X_test, y_test, verbose=0)
 
+                # Calculate additional metrics
+                predictions = model.predict(X_test, verbose=0)
+                pixel_errors = []
+                accuracy_10px = 0
+                accuracy_20px = 0
+
+                for i in range(len(predictions)):
+                    pred = predictions[i]
+                    true = y_test[i]
+
+                    # Calculate pixel distance error (denormalize and compute distance)
+                    p1_pred = np.array([pred[0] * 640, pred[1] * 480])
+                    p1_true = np.array([true[0] * 640, true[1] * 480])
+                    p2_pred = np.array([pred[2] * 640, pred[3] * 480])
+                    p2_true = np.array([true[2] * 640, true[3] * 480])
+
+                    dist_pred = np.linalg.norm(p2_pred - p1_pred)
+                    dist_true = np.linalg.norm(p2_true - p1_true)
+                    pixel_error = abs(dist_pred - dist_true)
+                    pixel_errors.append(pixel_error)
+
+                    if pixel_error <= 10:
+                        accuracy_10px += 1
+                    if pixel_error <= 20:
+                        accuracy_20px += 1
+
+                mean_pixel_error = np.mean(pixel_errors) if pixel_errors else 0
+                accuracy_10px = accuracy_10px / len(predictions) if predictions.shape[0] > 0 else 0
+                accuracy_20px = accuracy_20px / len(predictions) if predictions.shape[0] > 0 else 0
+
                 # Save model
                 model_file = MODELS_MESURE_DIR / f"CNN_BELMOUNTH_MODEL_V1.h5"
                 model_file.parent.mkdir(parents=True, exist_ok=True)
                 model.save(str(model_file))
 
+                # Save metadata with metrics
+                metadata = {
+                    "model_name": f"CNN_BELMOUNTH_MODEL_V1",
+                    "type": "mesure",
+                    "status": "trained",
+                    "test_loss": float(test_loss),
+                    "test_mae": float(test_mae),
+                    "mean_pixel_error": float(mean_pixel_error),
+                    "accuracy_10px": float(accuracy_10px),
+                    "accuracy_20px": float(accuracy_20px),
+                    "epochs_trained": 30,
+                    "training_samples": len(X_train),
+                    "test_samples": len(X_test),
+                    "trained_at": str(datetime.now())
+                }
+
+                metadata_file = MODELS_MESURE_DIR / "mesure_metadata.json"
+                metadata_file.parent.mkdir(parents=True, exist_ok=True)
+                metadata_file.write_text(json.dumps(metadata, indent=2))
+
+                # Reset training state
                 self.training_active = False
-                messagebox.showinfo("Training Complete", f"✓ {model_type.upper()} model trained and saved!\n\nTest Loss: {test_loss:.4f}\nTest MAE: {test_mae:.4f}")
+                self.current_training_model = None
+                self.current_training_samples = 0
+                self.training_start_time = None
+                messagebox.showinfo("Training Complete", f"✓ {model_type.upper()} model trained and saved!\n\nTest Loss: {test_loss:.4f}\nTest MAE: {test_mae:.4f}\nPixel Error: {mean_pixel_error:.2f}px\n10px Accuracy: {accuracy_10px:.1%}\n20px Accuracy: {accuracy_20px:.1%}")
 
             except Exception as e:
+                # Reset training state on failure
                 self.training_active = False
+                self.current_training_model = None
+                self.current_training_samples = 0
+                self.training_start_time = None
+                print("\n" + "=" * 80, file=sys.stderr)
+                print(f"TRAINING FAILED: {type(e).__name__}", file=sys.stderr)
+                print("=" * 80, file=sys.stderr)
+                print(f"Error: {str(e)}", file=sys.stderr)
+                print("\nFull Traceback:", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
+                print("=" * 80, file=sys.stderr)
                 messagebox.showerror("Training Error", f"Training failed:\n{str(e)}")
 
         # Start training in background
         thread = threading.Thread(target=train_worker, daemon=False)
         thread.start()
 
+    def _upgrade_model_finetune(self, model_type, new_sample_count, old_version):
+        """Fine-tune existing model on new samples (upgrade)"""
+        def upgrade_worker():
+            try:
+                import json
+                import numpy as np
+                from sklearn.model_selection import train_test_split
+
+                old_model_file = MODELS_MESURE_DIR / f"CNN_BELMOUNTH_MODEL_V1.h5" if old_version == 1 else MODELS_MESURE_DIR / "CNN_BELMOUNTH_MESURE_V2.h5"
+                new_model_file = MODELS_MESURE_DIR / f"CNN_BELMOUNTH_MESURE_V{old_version + 1}.h5"
+
+                # Load existing model
+                if not old_model_file.exists():
+                    raise Exception(f"Old model file not found: {old_model_file}")
+
+                old_model = tf.keras.models.load_model(str(old_model_file))
+
+                # Load NEW samples only (added after last training)
+                metadata_file = MODELS_MESURE_DIR / f"{model_type}_metadata.json"
+                trained_at_str = ""
+                if metadata_file.exists():
+                    metadata = json.loads(metadata_file.read_text())
+                    trained_at_str = metadata.get("trained_at", "")
+
+                annotations = json.loads(ANNOTATIONS_FILE.read_text())
+                new_annotations = []
+
+                if trained_at_str:
+                    trained_at = datetime.fromisoformat(trained_at_str.replace("Z", "+00:00"))
+                    for ann in annotations:
+                        try:
+                            created_str = ann.get("created_at", "")
+                            if created_str:
+                                created_at = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+                                if created_at > trained_at:
+                                    new_annotations.append(ann)
+                        except:
+                            pass
+                else:
+                    new_annotations = annotations
+
+                # Load and preprocess new samples
+                from PIL import Image
+                X_new = []
+                y_new = []
+
+                for ann in new_annotations[:new_sample_count]:
+                    img_path = Path(ann.get("original_path", ann.get("image_path", "")))
+                    if not img_path.is_absolute():
+                        img_path = ORIG_DIR / ann.get("filename", "")
+
+                    if img_path.exists():
+                        bgr = cv2.imread(str(img_path))
+                        if bgr is None:
+                            continue
+                        # Threshold to match inference-time preprocessing.
+                        thresh = apply_threshold(bgr)
+                        resized = cv2.resize(thresh, (640, 480))
+                        img_array = resized.astype(np.float32) / 255.0
+
+                        # Labels are under "points" (absolute) -> normalize them.
+                        points = ann.get("points", [])
+                        if len(points) < 2:
+                            continue
+                        aw = ann.get("width", 640) or 640
+                        ah = ann.get("height", 480) or 480
+                        keypoints = [
+                            points[0].get("x", 0) / aw,
+                            points[0].get("y", 0) / ah,
+                            points[1].get("x", 0) / aw,
+                            points[1].get("y", 0) / ah,
+                        ]
+                        X_new.append(img_array)
+                        y_new.append(keypoints)
+
+                if len(X_new) < 10:
+                    raise Exception("Not enough new samples to fine-tune")
+
+                X_new = np.array(X_new)[..., np.newaxis]
+                y_new = np.array(y_new, dtype=np.float32)
+
+                # Split new data
+                X_train_new, X_test_new, y_train_new, y_test_new = train_test_split(X_new, y_new, test_size=0.2, random_state=42)
+
+                # Fine-tune: lower learning rate for transfer learning
+                old_model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4), loss='mse', metrics=['mae'])
+
+                class ProgressCallback(tf.keras.callbacks.Callback):
+                    def on_epoch_end(self, epoch, logs=None):
+                        pct = int((epoch + 1) / self.params['epochs'] * 100)
+                        print(f"[CALLBACK] Epoch {epoch+1}, pct={pct}, logs={logs}", file=sys.stderr)
+                        if hasattr(self, 'app') and hasattr(self.app, 'current_progress_updater'):
+                            try:
+                                train_loss = logs.get('loss') if logs else None
+                                val_loss = logs.get('val_loss') if logs else None
+                                print(f"[CALLBACK] Calling updater: pct={pct}, epoch={epoch+1}, train_loss={train_loss}, val_loss={val_loss}", file=sys.stderr)
+                                self.app.current_progress_updater(pct, epoch=epoch + 1, train_loss=train_loss, val_loss=val_loss)
+                            except Exception as e:
+                                print(f"[CALLBACK ERROR] {type(e).__name__}: {e}", file=sys.stderr)
+                        else:
+                            print(f"[CALLBACK] App or updater not set", file=sys.stderr)
+
+                progress_cb = ProgressCallback()
+                progress_cb.app = self
+
+                # Fine-tune for fewer epochs (10 instead of 30) since we're starting from trained weights
+                history = old_model.fit(
+                    X_train_new, y_train_new,
+                    validation_split=0.1,
+                    epochs=10,
+                    batch_size=16,
+                    callbacks=[progress_cb],
+                    verbose=0
+                )
+
+                # Evaluate on new test set
+                test_loss, test_mae = old_model.evaluate(X_test_new, y_test_new, verbose=0)
+
+                # Calculate metrics on new test set
+                predictions = old_model.predict(X_test_new, verbose=0)
+                pixel_errors = []
+                accuracy_10px = 0
+                accuracy_20px = 0
+
+                for i in range(len(predictions)):
+                    pred = predictions[i]
+                    true = y_test_new[i]
+
+                    p1_pred = np.array([pred[0] * 640, pred[1] * 480])
+                    p1_true = np.array([true[0] * 640, true[1] * 480])
+                    p2_pred = np.array([pred[2] * 640, pred[3] * 480])
+                    p2_true = np.array([true[2] * 640, true[3] * 480])
+
+                    dist_pred = np.linalg.norm(p2_pred - p1_pred)
+                    dist_true = np.linalg.norm(p2_true - p1_true)
+                    pixel_error = abs(dist_pred - dist_true)
+                    pixel_errors.append(pixel_error)
+
+                    if pixel_error <= 10:
+                        accuracy_10px += 1
+                    if pixel_error <= 20:
+                        accuracy_20px += 1
+
+                mean_pixel_error = np.mean(pixel_errors) if pixel_errors else 0
+                accuracy_10px = accuracy_10px / len(predictions) if predictions.shape[0] > 0 else 0
+                accuracy_20px = accuracy_20px / len(predictions) if predictions.shape[0] > 0 else 0
+
+                # Save fine-tuned model as new version
+                new_model_file.parent.mkdir(parents=True, exist_ok=True)
+                old_model.save(str(new_model_file))
+
+                # Save metadata for new version
+                new_metadata = {
+                    "model_name": f"CNN_BELMOUNTH_MODEL_V{old_version + 1}",
+                    "type": "mesure",
+                    "status": "trained",
+                    "test_loss": float(test_loss),
+                    "test_mae": float(test_mae),
+                    "mean_pixel_error": float(mean_pixel_error),
+                    "accuracy_10px": float(accuracy_10px),
+                    "accuracy_20px": float(accuracy_20px),
+                    "epochs_trained": 10,
+                    "training_samples": len(X_train_new),
+                    "test_samples": len(X_test_new),
+                    "trained_at": str(datetime.now()),
+                    "upgraded_from_version": old_version,
+                    "new_samples_used": new_sample_count
+                }
+
+                metadata_file = MODELS_MESURE_DIR / "mesure_metadata.json"
+                metadata_file.write_text(json.dumps(new_metadata, indent=2))
+
+                # Reset training state
+                self.training_active = False
+                self.current_training_model = None
+                self.current_training_samples = 0
+                self.training_start_time = None
+
+                # Show success message and refresh model page
+                def show_result():
+                    messagebox.showinfo("Upgrade Complete", f"✓ Model upgraded to V{old_version + 1}!\n\nTest Loss: {test_loss:.4f}\nTest MAE: {test_mae:.4f}\nPixel Error: {mean_pixel_error:.2f}px\n10px Accuracy: {accuracy_10px:.1%}\n20px Accuracy: {accuracy_20px:.1%}")
+                    # Refresh model page to show new V2
+                    self._switch_page("model", self._show_model_page)
+
+                self.root.after(0, show_result)
+
+            except Exception as e:
+                # Reset training state on failure
+                self.training_active = False
+                self.current_training_model = None
+                self.current_training_samples = 0
+                self.training_start_time = None
+                print("\n" + "=" * 80, file=sys.stderr)
+                print(f"UPGRADE FAILED: {type(e).__name__}", file=sys.stderr)
+                print("=" * 80, file=sys.stderr)
+                print(f"Error: {str(e)}", file=sys.stderr)
+                print("\nFull Traceback:", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
+                print("=" * 80, file=sys.stderr)
+                messagebox.showerror("Upgrade Error", f"Upgrade failed:\n{str(e)}")
+
+        # Start upgrade in background
+        thread = threading.Thread(target=upgrade_worker, daemon=False)
+        thread.start()
+
     def _cancel_training(self):
         """Cancel the ongoing training"""
         if messagebox.askyesno("Cancel Training", "Are you sure you want to cancel the training?\n\nThis cannot be undone."):
+            # Reset training state
             self.training_active = False
+            self.current_training_model = None
+            self.current_training_samples = 0
+            self.training_start_time = None
             # TODO: Call backend to stop training
             messagebox.showinfo("Training Cancelled", "Training has been cancelled.\n\nGo back to MODEL section to start a new training.")
             self._switch_page("model", self._show_model_page)
@@ -3776,12 +4806,50 @@ To start training a model:
         create_btn.pack(side=tk.LEFT)
         add_hover_effect(create_btn, GREEN, "#388E3C", "#FFFFFF")
 
-    def _upgrade_model_dialog(self, model_type, dataset_count, current_version):
-        """Dialog to upgrade an existing model to next version"""
+    def _count_new_samples(self, model_type):
+        """Count samples added since the last model training"""
+        try:
+            metadata_file = MODELS_MESURE_DIR / f"{model_type}_metadata.json"
+            if not metadata_file.exists():
+                return 0
+
+            metadata = json.loads(metadata_file.read_text())
+            trained_at_str = metadata.get("trained_at", "")
+
+            if not trained_at_str:
+                return 0
+
+            # Parse the training date
+            trained_at = datetime.fromisoformat(trained_at_str.replace("Z", "+00:00"))
+
+            # Count samples added after training
+            annotations_file = ANNOTATIONS_FILE
+            if not annotations_file.exists():
+                return 0
+
+            annotations = json.loads(annotations_file.read_text())
+            new_count = 0
+
+            for ann in annotations:
+                created_str = ann.get("created_at", "")
+                if created_str:
+                    try:
+                        created_at = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+                        if created_at > trained_at:
+                            new_count += 1
+                    except:
+                        pass
+
+            return new_count
+        except:
+            return 0
+
+    def _upgrade_model_dialog(self, model_type, dataset_count, current_version, new_samples):
+        """Dialog to upgrade an existing model to next version with fine-tuning"""
         next_version = current_version + 1
         dialog = tk.Toplevel(self.root)
         dialog.title(f"Upgrade {model_type.upper()} Model")
-        dialog.geometry("500x350")
+        dialog.geometry("550x400")
         dialog.configure(bg=BG)
         dialog.resizable(False, False)
         dialog.grab_set()
@@ -3789,29 +4857,29 @@ To start training a model:
         frame = tk.Frame(dialog, bg=BG)
         frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
-        tk.Label(frame, text=f"Upgrade {model_type.upper()} Model", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
+        tk.Label(frame, text=f"Upgrade {model_type.upper()} Model to V{next_version}", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
 
-        tk.Label(frame, text=f"Current available dataset: {dataset_count} samples", bg=BG, fg=TEXT, font=("Arial", 11)).pack(anchor=tk.W, pady=(0, 5))
+        tk.Label(frame, text=f"New samples available: {new_samples} (≥500 required)", bg=BG, fg=GREEN if new_samples >= 500 else AMBER, font=("Arial", 11, "bold")).pack(anchor=tk.W, pady=(0, 5))
         tk.Label(frame, text=f"Current version: V{current_version} → New version: V{next_version}", bg=BG, fg=TEXT, font=("Arial", 11, "bold")).pack(anchor=tk.W, pady=(0, 15))
 
-        limit = 499 if model_type == "mesure" else 500
-        if dataset_count < limit:
-            shortage = limit - dataset_count
-            tk.Label(frame, text=f"❌ Not enough new data! Need {shortage} more samples.", bg=BG, fg=RED, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 20))
-            tk.Label(frame, text=f"Please collect and approve at least {limit} new captures before upgrading.", bg=BG, fg=TEXT2, font=("Arial", 9)).pack(anchor=tk.W, pady=(0, 20))
+        if new_samples < 500:
+            shortage = 500 - new_samples
+            tk.Label(frame, text=f"❌ Not enough new samples! Need {shortage} more.", bg=BG, fg=RED, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 20))
+            tk.Label(frame, text=f"Please collect and approve at least 500 NEW captures since the last training before upgrading.", bg=BG, fg=TEXT2, font=("Arial", 9)).pack(anchor=tk.W, pady=(0, 20))
 
             close_btn = tk.Button(frame, text="CLOSE", command=dialog.destroy, bg=PANEL, fg=TEXT, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
             close_btn.pack(anchor=tk.W)
         else:
-            tk.Label(frame, text=f"✓ Ready to upgrade with {dataset_count} samples", bg=BG, fg=GREEN, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 20))
+            tk.Label(frame, text=f"✓ Ready to upgrade with {new_samples} NEW samples", bg=BG, fg=GREEN, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 20))
 
             tk.Label(frame, text="⚙ Upgrade will:", bg=BG, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 10))
 
-            info_text = f"""• Use all {dataset_count} approved captures
-• Create new model version (V{current_version} → V{next_version})
+            info_text = f"""• Load V{current_version} model (transfer learning)
+• Fine-tune on {new_samples} NEW samples
+• Create new model version (V{next_version})
 • Keep V{current_version} for comparison/rollback
-• Training: {int(dataset_count * 0.8)} samples
-• Testing: {int(dataset_count * 0.2)} samples
+• Training: {int(new_samples * 0.8)} new samples
+• Testing: {int(new_samples * 0.2)} new samples
 • Optional: Delete old version after V{next_version} is verified"""
 
             tk.Label(frame, text=info_text, bg=BG, fg=TEXT2, font=("Arial", 9), justify=tk.LEFT).pack(anchor=tk.W, pady=(0, 20))
@@ -3825,10 +4893,17 @@ To start training a model:
             add_hover_effect(cancel_btn, PANEL, SEP, TEXT)
 
             def confirm_upgrade():
-                messagebox.showinfo("Model Upgrade", f"Upgrading {model_type} model to V{next_version}...\n\nThis may take several minutes.")
+                messagebox.showinfo("Model Upgrade", f"Upgrading {model_type} model to V{next_version}...\n\nThis may take several minutes with fine-tuning on {new_samples} new samples.")
                 dialog.destroy()
-                # TODO: Call backend to start upgrade training
-                messagebox.showinfo("Success", f"Model upgrade started!\nV{next_version} will be created while keeping V{current_version}.\nYou can delete the old version once verified.")
+                # Store upgrade info for the TRAINING page
+                self.current_training_model = model_type
+                self.current_training_samples = new_samples
+                self.training_start_time = time.time()
+                self.training_active = True
+                # Switch to TRAINING page to show progress
+                self._switch_page("training", self._show_training_page)
+                # Start upgrade training
+                self._upgrade_model_finetune(model_type, new_samples, current_version)
 
             upgrade_btn = tk.Button(btn_frame, text=f"🔄 UPGRADE TO V{next_version}", command=confirm_upgrade, bg=GREEN, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=8)
             upgrade_btn.pack(side=tk.LEFT)
@@ -3862,6 +4937,909 @@ To start training a model:
                 messagebox.showerror("Error", f"Model file not found: {model_file.name}")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to delete model: {str(e)}")
+
+    def _delete_model_all(self, model_type):
+        """Delete all versions of a model"""
+        if not messagebox.askyesno("Confirm Delete All", f"Delete ALL versions of {model_type.upper()} model?\n\nThis will permanently remove the trained model and cannot be undone."):
+            return
+
+        try:
+            model_dir = MODELS_MESURE_DIR
+            deleted_size = 0
+            deleted_count = 0
+
+            if model_type == "mesure":
+                model_files = [
+                    model_dir / "CNN_BELMOUNTH_MODEL_V1.h5",
+                    model_dir / "CNN_BELMOUNTH_MESURE_V2.h5"
+                ]
+            else:  # state
+                model_files = [
+                    model_dir / "CNN_BELMOUNTH_STATE_V1.h5",
+                    model_dir / "CNN_BELMOUNTH_STATE_V2.h5"
+                ]
+
+            for model_file in model_files:
+                if model_file.exists():
+                    deleted_size += model_file.stat().st_size
+                    model_file.unlink()
+                    deleted_count += 1
+
+            if deleted_count > 0:
+                messagebox.showinfo("Success", f"✓ {deleted_count} model file(s) deleted!\n\nFreed up {deleted_size / (1024**3):.2f} GB\n\nYou can train a new {model_type.upper()} model.")
+                # Refresh the page
+                self._switch_page("model", self._show_model_page)
+            else:
+                messagebox.showerror("Error", f"No {model_type.upper()} model files found to delete")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to delete model: {str(e)}")
+
+    def _export_single_model(self, model_type, version, model_name):
+        """Export a single model version as ZIP"""
+        from tkinter import filedialog
+
+        try:
+            # Ask user where to save
+            save_path = filedialog.asksaveasfilename(
+                defaultextension=".zip",
+                filetypes=[("ZIP Files", "*.zip"), ("All Files", "*.*")],
+                initialfile=f"{model_type}_{model_name}_V{version}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+            )
+
+            if not save_path:
+                return
+
+            import zipfile
+            import shutil
+
+            # Create temporary zip file
+            temp_zip = Path(tempfile.gettempdir()) / f"bellmouth_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+
+            with zipfile.ZipFile(temp_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
+                if model_type == "mesure":
+                    model_file = MODELS_MESURE_DIR / f"CNN_BELMOUNTH_MODEL_V{version}.h5"
+                    if not model_file.exists():
+                        # Try alternative naming
+                        model_file = MODELS_MESURE_DIR / f"CNN_BELMOUNTH_MESURE_V{version}.h5"
+                else:  # state
+                    state_dir = MODELS_ROOT / "state"
+                    model_file = state_dir / f"CNN_BELMOUNTH_STATE_V{version}.h5"
+
+                if not model_file.exists():
+                    messagebox.showerror("Error", f"Model file not found: {model_file}")
+                    return
+
+                # Add model file
+                zf.write(model_file, f"{model_type}/{model_file.name}")
+                print(f"Added: {model_file.name}")
+
+                # Add manifest
+                manifest = {
+                    "export_date": datetime.now().isoformat(),
+                    "model_type": model_type,
+                    "model_name": model_name,
+                    "version": version,
+                    "model_file": model_file.name
+                }
+                zf.writestr("MANIFEST.json", json.dumps(manifest, indent=2))
+
+            # Move to final location
+            shutil.move(str(temp_zip), save_path)
+            file_size = Path(save_path).stat().st_size / (1024 * 1024)
+
+            messagebox.showinfo("Export Complete", f"✓ Model exported successfully!\n\n"
+                                                   f"Model: {model_name} V{version}\n"
+                                                   f"File: {Path(save_path).name}\n"
+                                                   f"Size: {file_size:.2f} MB")
+            print(f"Export complete: {save_path}")
+
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export model:\n{str(e)}")
+            print(f"Export error: {e}")
+
+    def _send_models_to_machines_dialog(self, mesure_exists, mesure_latest_version, state_exists=False, state_latest_version=0):
+        """Dialog with 2 options: Upload NEW or Select EXISTING.
+        STATE model was removed from the product, so state_exists defaults to
+        False and every STATE branch below is simply skipped."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Send Models to Machines")
+        dialog.geometry("550x550")
+        dialog.configure(bg=BG)
+        dialog.grab_set()
+
+        # Create scrollable frame for content
+        canvas = tk.Canvas(dialog, bg=BG, highlightthickness=0)
+        scrollbar = tk.Scrollbar(dialog, orient=tk.VERTICAL, command=canvas.yview)
+        frame = tk.Frame(canvas, bg=BG)
+
+        frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=20, pady=20)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=20)
+
+        tk.Label(frame, text="📤 Send Models to Machines", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+        # === METHOD SELECTION ===
+        method_var = tk.StringVar(value="upload")
+
+        upload_radio = tk.Radiobutton(frame, text="☁️ Upload NEW Models to Google Drive", variable=method_var, value="upload",
+                                      bg=BG, fg=TEXT2, font=("Arial", 10), selectcolor=PANEL, activebackground=BG)
+        upload_radio.pack(anchor=tk.W, pady=5)
+
+        select_radio = tk.Radiobutton(frame, text="📁 Select EXISTING Model from Google Drive", variable=method_var, value="select",
+                                     bg=BG, fg=TEXT2, font=("Arial", 10), selectcolor=PANEL, activebackground=BG)
+        select_radio.pack(anchor=tk.W, pady=5)
+
+        # === UPLOAD NEW MODELS SECTION ===
+        upload_frame = tk.Frame(frame, bg=BG)
+        upload_frame.pack(fill=tk.X, pady=(20, 0))
+
+        # JSON credentials selector
+        creds_label = tk.Label(upload_frame, text="📁 JSON Credentials File:", bg=BG, fg=TEXT2, font=("Arial", 9))
+        creds_label.pack(anchor=tk.W)
+
+        creds_frame = tk.Frame(upload_frame, bg=BG)
+        creds_frame.pack(fill=tk.X, pady=(5, 10))
+
+        creds_entry = tk.Entry(creds_frame, font=("Arial", 9), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=1)
+        creds_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        creds_entry.insert(0, "No file selected")
+
+        def browse_creds():
+            file = filedialog.askopenfilename(
+                filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
+                title="Select Google Credentials JSON"
+            )
+            if file:
+                creds_entry.delete(0, tk.END)
+                creds_entry.insert(0, file)
+
+        browse_creds_btn = tk.Button(creds_frame, text="🔍 BROWSE", command=browse_creds,
+                                     bg=ACCENT, fg="#FFFFFF", font=("Arial", 9, "bold"), relief=tk.FLAT, bd=0, padx=10)
+        browse_creds_btn.pack(side=tk.LEFT)
+        add_hover_effect(browse_creds_btn, ACCENT, "#5A5F75", "#FFFFFF")
+
+        from tkinter import ttk
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('TCombobox',
+                      fieldbackground=PANEL,
+                      background=PANEL,
+                      foreground=TEXT,
+                      arrowcolor=TEXT2)
+
+        # MESURE Model section
+        mesure_label = tk.Label(upload_frame, text="📊 MESURE Model Version:", bg=BG, fg=TEXT2, font=("Arial", 9))
+        mesure_label.pack(anchor=tk.W, pady=(10, 5))
+
+        if mesure_exists:
+            mesure_versions = [f"V{mesure_latest_version}"]
+            mesure_var = tk.StringVar(value=mesure_versions[0])
+            mesure_dropdown = ttk.Combobox(upload_frame, textvariable=mesure_var, values=mesure_versions,
+                                          state='readonly', font=("Arial", 9), width=35)
+            mesure_dropdown.pack(fill=tk.X, pady=(0, 15))
+        else:
+            tk.Label(upload_frame, text="✗ No MESURE model available", bg=BG, fg=RED, font=("Arial", 9)).pack(anchor=tk.W, pady=(0, 15))
+            mesure_var = None
+
+        # STATE Model section
+        state_label = tk.Label(upload_frame, text="🔍 STATE Model Version:", bg=BG, fg=TEXT2, font=("Arial", 9))
+        state_label.pack(anchor=tk.W, pady=(10, 5))
+
+        if state_exists:
+            state_versions = [f"V{state_latest_version}"]
+            state_var = tk.StringVar(value=state_versions[0])
+            state_dropdown = ttk.Combobox(upload_frame, textvariable=state_var, values=state_versions,
+                                         state='readonly', font=("Arial", 9), width=35)
+            state_dropdown.pack(fill=tk.X, pady=(0, 0))
+        else:
+            tk.Label(upload_frame, text="✗ No STATE model available", bg=BG, fg=RED, font=("Arial", 9)).pack(anchor=tk.W, pady=(0, 0))
+            state_var = None
+
+        # === UPLOAD BUTTON (in upload section) ===
+        def upload_models():
+            # Determine which model to upload
+            model_to_upload = None
+            if mesure_exists and state_exists:
+                # Ask user which one
+                choice = messagebox.askyesnocancel("Select Model", "Upload MESURE model?\n\nYes = MESURE\nNo = STATE\nCancel = Cancel")
+                if choice is None:
+                    return
+                model_to_upload = f"MESURE {mesure_var.get()}" if choice else f"STATE {state_var.get()}"
+            elif mesure_exists:
+                model_to_upload = f"MESURE {mesure_var.get()}"
+            elif state_exists:
+                model_to_upload = f"STATE {state_var.get()}"
+            else:
+                messagebox.showerror("Error", "No trained models available")
+                return
+
+            creds_path = creds_entry.get()
+            if creds_path == "No file selected":
+                messagebox.showerror("Error", "Please select JSON credentials file")
+                return
+
+            dialog.destroy()
+            messagebox.showinfo("Uploading", f"Uploading {model_to_upload}...\n\nThis may take several minutes for large files.\n\nThe app will notify all machines automatically when complete.")
+            import threading
+            upload_thread = threading.Thread(
+                target=self._upload_selected_model,
+                args=(model_to_upload, creds_path, notify_var.get()),
+                daemon=True
+            )
+            upload_thread.start()
+
+        upload_btn = tk.Button(upload_frame, text="☁️ UPLOAD TO DRIVE & SEND TO MACHINES", command=upload_models,
+                              bg=GREEN, fg="#FFFFFF", font=("Arial", 11, "bold"), relief=tk.FLAT, bd=0, padx=20, pady=12)
+        upload_btn.pack(fill=tk.X, pady=(20, 0))
+        add_hover_effect(upload_btn, GREEN, "#388E3C", "#FFFFFF")
+
+        # === SELECT EXISTING SECTION ===
+        select_frame = tk.Frame(frame, bg=BG)
+
+        url_label = tk.Label(select_frame, text="🔗 Google Drive Model URL:", bg=BG, fg=TEXT2, font=("Arial", 9))
+        url_label.pack(anchor=tk.W)
+
+        url_entry = tk.Entry(select_frame, font=("Arial", 9), bg=PANEL, fg=TEXT, relief=tk.FLAT, bd=1)
+        url_entry.pack(fill=tk.X, pady=(5, 0))
+        url_entry.insert(0, "https://drive.google.com/uc?id=...&export=download")
+
+        # === SEND BUTTON (in select section) ===
+        def send_existing():
+            url = url_entry.get().strip()
+            if not url or url.startswith("https://drive.google.com/uc?id="):
+                messagebox.showerror("Error", "Please enter a valid Google Drive URL")
+                return
+            dialog.destroy()
+            messagebox.showinfo("Sending", f"Sending model to machines...")
+            import threading
+            send_thread = threading.Thread(
+                target=self._send_manual_model,
+                args=(url, "custom", notify_var.get()),
+                daemon=True
+            )
+            send_thread.start()
+
+        send_btn = tk.Button(select_frame, text="📤 SEND TO MACHINES", command=send_existing,
+                            bg=ACCENT, fg="#FFFFFF", font=("Arial", 11, "bold"), relief=tk.FLAT, bd=0, padx=20, pady=12)
+        send_btn.pack(fill=tk.X, pady=(15, 0))
+        add_hover_effect(send_btn, ACCENT, "#5A5F75", "#FFFFFF")
+
+        # === NOTIFICATIONS (bottom) ===
+        notify_var = tk.BooleanVar(value=True)
+        notify_cb = tk.Checkbutton(frame, text="✓ Send notifications to all machines", variable=notify_var,
+                                   bg=BG, fg=TEXT2, font=("Arial", 9), selectcolor=PANEL, activebackground=BG)
+        notify_cb.pack(anchor=tk.W, pady=(20, 0))
+
+        # === CANCEL BUTTON ===
+        btn_frame = tk.Frame(frame, bg=BG)
+        btn_frame.pack(fill=tk.X, pady=(30, 0))
+
+        cancel_btn = tk.Button(btn_frame, text="CANCEL", command=dialog.destroy, bg=PANEL, fg=TEXT,
+                              font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=20, pady=10)
+        cancel_btn.pack(side=tk.LEFT)
+        add_hover_effect(cancel_btn, PANEL, SEP, TEXT)
+
+        # === CONDITIONAL UI ===
+        def update_ui(*args):
+            if method_var.get() == "upload":
+                upload_frame.pack(fill=tk.X, pady=(20, 0))
+                select_frame.pack_forget()
+            else:
+                upload_frame.pack_forget()
+                select_frame.pack(fill=tk.X, pady=(20, 0))
+
+        method_var.trace_add("write", update_ui)
+        update_ui()  # Initial state
+
+    def _upload_selected_model(self, model_name, creds_path, notify):
+        """Upload a selected model to Google Drive with progress bar"""
+        import zipfile
+        import shutil
+
+        try:
+            # Parse model name: "MESURE V2" or "STATE V1"
+            parts = model_name.split(" V")
+            model_type = parts[0].lower()  # "mesure" or "state"
+            version = int(parts[1]) if len(parts) > 1 else 1
+
+            # Find model file
+            if model_type == "mesure":
+                model_file = MODELS_MESURE_DIR / f"CNN_BELMOUNTH_MODEL_V{version}.h5"
+                if not model_file.exists():
+                    model_file = MODELS_MESURE_DIR / f"CNN_BELMOUNTH_MESURE_V{version}.h5"
+            else:
+                state_dir = MODELS_ROOT / "state"
+                model_file = state_dir / f"CNN_BELMOUNTH_STATE_V{version}.h5"
+
+            if not model_file.exists():
+                messagebox.showerror("Error", f"Model file not found: {model_file}")
+                return
+
+            # Create progress dialog
+            progress_dialog = tk.Toplevel(self.root)
+            progress_dialog.title("Uploading Model")
+            progress_dialog.geometry("500x200")
+            progress_dialog.configure(bg=BG)
+            progress_dialog.resizable(False, False)
+            progress_dialog.grab_set()
+
+            content = tk.Frame(progress_dialog, bg=BG)
+            content.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+            tk.Label(content, text=f"📤 Uploading {model_name}...", bg=BG, fg=TEXT, font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+            # Progress bar
+            from tkinter import ttk
+            progress_var = tk.DoubleVar(value=0)
+            progress_bar = ttk.Progressbar(content, variable=progress_var, maximum=100, length=400, mode='determinate')
+            progress_bar.pack(fill=tk.X, pady=(0, 10))
+
+            # Progress text
+            progress_text = tk.Label(content, text="0% - Preparing...", bg=BG, fg=TEXT2, font=("Arial", 9))
+            progress_text.pack(anchor=tk.W, pady=(0, 10))
+
+            # Status
+            status_text = tk.Label(content, text="", bg=BG, fg=TEXT2, font=("Arial", 9))
+            status_text.pack(anchor=tk.W)
+
+            progress_dialog.update()
+
+            # Create ZIP
+            temp_zip = Path(tempfile.gettempdir()) / f"bellmouth_upload_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+            with zipfile.ZipFile(temp_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
+                zf.write(model_file, f"{model_type}/{model_file.name}")
+                zf.writestr("MANIFEST.json", json.dumps({
+                    "export_date": datetime.now().isoformat(),
+                    "model_type": model_type,
+                    "model_name": model_name,
+                    "version": version,
+                    "model_file": model_file.name
+                }, indent=2))
+
+            print(f"Created ZIP: {temp_zip}")
+            progress_text.config(text="✓ ZIP created - Starting upload...")
+            progress_dialog.update()
+
+            # Upload to Google Drive
+            from google_drive_client import GoogleDriveClient
+            drive_client = GoogleDriveClient(creds_path)
+
+            zip_size_mb = temp_zip.stat().st_size / (1024 * 1024)
+            print(f"Uploading {temp_zip.name} ({zip_size_mb:.2f} MB)...")
+
+            # Progress callback for GUI
+            def on_progress(percent, message):
+                try:
+                    progress_var.set(percent)
+                    progress_text.config(text=f"{percent}% - {message}")
+                    status_text.config(text=f"Uploading {zip_size_mb:.2f} MB...")
+                    progress_dialog.update()
+                except:
+                    pass  # Dialog closed
+
+            # Upload with progress tracking
+            upload_result = drive_client.upload_file(str(temp_zip), file_name=temp_zip.name, progress_callback=on_progress)
+            download_link = upload_result['downloadLink']
+
+            # Update progress
+            progress_var.set(100)
+            progress_text.config(text="100% - Upload complete!")
+            status_text.config(text=f"✓ {temp_zip.name} uploaded successfully")
+            progress_dialog.update()
+
+            print(f"Upload complete! File ID: {upload_result.get('id')}")
+            temp_zip.unlink()  # Delete temp file
+
+            # Wait a moment to show completion
+            self.root.after(1500, progress_dialog.destroy)
+
+            # Send notifications if enabled
+            if notify:
+                try:
+                    from api_client import APIClient
+                    api = APIClient(api_url="http://localhost:8000")
+                    # Determine notification type based on model
+                    notif_type = "mesure-upload" if model_type == "mesure" else "state-upload"
+                    api.send_model_update_notifications(download_link, model_name, notification_type=notif_type)
+                    messagebox.showinfo("Success", f"✓ {model_name} uploaded and shared with machines!\n\nDownload link has been sent to all machines.")
+                except Exception as e:
+                    messagebox.showinfo("Partial Success", f"✓ Model uploaded to Google Drive!\n\nBut notifications may not have been sent:\n{str(e)}\n\nLink: {download_link}")
+            else:
+                messagebox.showinfo("Success", f"✓ {model_name} uploaded to Google Drive!\n\nLink: {download_link}")
+
+        except Exception as e:
+            messagebox.showerror("Upload Error", f"Failed to upload model:\n{str(e)}")
+            print(f"Upload error: {e}")
+
+    def _send_manual_model(self, url, model_type, notify):
+        """Send model from manual URL to machines"""
+        try:
+            # Show success dialog with file info
+            success_dialog = tk.Toplevel(self.root)
+            success_dialog.title("Models Ready to Send")
+            success_dialog.geometry("650x600")
+            success_dialog.configure(bg=BG)
+            success_dialog.grab_set()
+
+            # Create scrollable frame
+            canvas = tk.Canvas(success_dialog, bg=BG, highlightthickness=0)
+            scrollbar = tk.Scrollbar(success_dialog, orient=tk.VERTICAL, command=canvas.yview)
+            content = tk.Frame(canvas, bg=BG)
+
+            content.bind(
+                "<Configure>",
+                lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            )
+
+            canvas.create_window((0, 0), window=content, anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
+
+            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=20, pady=20)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=20)
+
+            tk.Label(content, text="✓ Ready to Send to Machines!", bg=BG, fg=GREEN, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+            # Summary
+            summary_frame = tk.Frame(content, bg=PANEL, relief=tk.SUNKEN, bd=1)
+            summary_frame.pack(fill=tk.X, pady=(0, 20), padx=5)
+
+            model_type_text = {"mesure": "MESURE", "state": "STATE", "custom": "Custom"}.get(model_type, "Custom")
+            summary_text = f"""📦 Model File:
+• Type: {model_type_text}
+• Download Link Ready
+• Ready to send to machines"""
+
+            tk.Label(summary_frame, text=summary_text, bg=PANEL, fg=TEXT2, font=("Arial", 9), justify=tk.LEFT).pack(anchor=tk.W, padx=15, pady=15)
+
+            # Download link section
+            tk.Label(content, text="📥 Download Link (for machines):", bg=BG, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(10, 5))
+
+            link_frame = tk.Frame(content, bg=PANEL, relief=tk.SUNKEN, bd=1)
+            link_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 20), padx=5)
+
+            link_text = tk.Text(link_frame, height=4, bg=PANEL, fg=ACCENT, font=("Courier", 9), relief=tk.FLAT, bd=0, wrap=tk.WORD)
+            link_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            link_text.insert("1.0", url)
+            link_text.config(state=tk.DISABLED)
+
+            # Copy button
+            def copy_link():
+                success_dialog.clipboard_clear()
+                success_dialog.clipboard_append(url)
+                messagebox.showinfo("Copied", "Download link copied to clipboard!")
+
+            copy_btn = tk.Button(content, text="📋 Copy Download Link", command=copy_link, bg=ACCENT, fg="#FFFFFF",
+                               font=("Arial", 9, "bold"), relief=tk.FLAT, bd=0, padx=15, pady=8)
+            copy_btn.pack(anchor=tk.W)
+
+            # Send notifications
+            if notify:
+                tk.Label(content, text="📢 Sending Notifications to Machines...", bg=BG, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(20, 5))
+
+                notify_info = tk.Frame(content, bg=PANEL, relief=tk.SUNKEN, bd=1)
+                notify_info.pack(fill=tk.X, padx=5)
+
+                try:
+                    from api_client import APIClient
+                    api = APIClient(api_url="http://localhost:8000")
+                    notify_result = api.send_model_update_notifications(url, model_type_text, notification_type="info")
+
+                    if notify_result.get("ok"):
+                        notify_text = f"""✓ Notifications sent successfully!
+
+• Model Type: {model_type_text}
+• Download link shared with all active machines
+• Machines will auto-update when they process the notification"""
+                    else:
+                        error_msg = notify_result.get('error', 'Unknown error')
+                        notify_text = f"""⚠️ URL ready, but notifications may not have been sent.
+
+Error: {error_msg}
+
+Troubleshooting:
+• Make sure the API backend is running
+• Verify at least one machine is registered and active
+• Check that machines have is_active = True in database"""
+                except Exception as e:
+                    error_str = str(e)
+                    if "Connection" in error_str or "refused" in error_str:
+                        notify_text = f"""⚠️ URL ready to share!
+
+⚠️ API Backend Not Running
+
+To enable notifications:
+1. Open terminal in C:\\BellmouthProject\\app\\
+2. Run: python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
+3. Leave it running in the background
+4. Then try sending again"""
+                    else:
+                        notify_text = f"""✓ URL ready to share!
+
+Error sending auto-notifications: {error_str}
+
+The download link is ready to share manually."""
+
+                tk.Label(notify_info, text=notify_text, bg=PANEL, fg=TEXT2, font=("Arial", 8), justify=tk.LEFT).pack(anchor=tk.W, padx=10, pady=10)
+
+            # Close button
+            close_btn = tk.Button(content, text="CLOSE", command=success_dialog.destroy, bg=PANEL, fg=TEXT,
+                                 font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=20, pady=10)
+            close_btn.pack(side=tk.LEFT, pady=(20, 0))
+            add_hover_effect(close_btn, PANEL, SEP, TEXT)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to process model:\n{str(e)}")
+
+    def _send_existing_model(self, file_name, download_link, notify):
+        """Send existing model file to machines"""
+        try:
+            # Show success dialog with file info
+            success_dialog = tk.Toplevel(self.root)
+            success_dialog.title("Models Ready to Send")
+            success_dialog.geometry("650x600")
+            success_dialog.configure(bg=BG)
+            success_dialog.grab_set()
+
+            # Create scrollable frame
+            canvas = tk.Canvas(success_dialog, bg=BG, highlightthickness=0)
+            scrollbar = tk.Scrollbar(success_dialog, orient=tk.VERTICAL, command=canvas.yview)
+            content = tk.Frame(canvas, bg=BG)
+
+            content.bind(
+                "<Configure>",
+                lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            )
+
+            canvas.create_window((0, 0), window=content, anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
+
+            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=20, pady=20)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=20)
+
+            tk.Label(content, text="✓ Ready to Send to Machines!", bg=BG, fg=GREEN, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+            # Summary
+            summary_frame = tk.Frame(content, bg=PANEL, relief=tk.SUNKEN, bd=1)
+            summary_frame.pack(fill=tk.X, pady=(0, 20), padx=5)
+
+            summary_text = f"""📦 Model File:
+• Name: {file_name}
+• Download Link Ready
+• Ready to send to machines"""
+
+            tk.Label(summary_frame, text=summary_text, bg=PANEL, fg=TEXT2, font=("Arial", 9), justify=tk.LEFT).pack(anchor=tk.W, padx=15, pady=15)
+
+            # Download link section
+            tk.Label(content, text="📥 Download Link (for machines):", bg=BG, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(10, 5))
+
+            link_frame = tk.Frame(content, bg=PANEL, relief=tk.SUNKEN, bd=1)
+            link_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 20), padx=5)
+
+            link_text = tk.Text(link_frame, height=4, bg=PANEL, fg=ACCENT, font=("Courier", 9), relief=tk.FLAT, bd=0, wrap=tk.WORD)
+            link_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            link_text.insert("1.0", download_link)
+            link_text.config(state=tk.DISABLED)
+
+            # Copy button
+            def copy_link():
+                success_dialog.clipboard_clear()
+                success_dialog.clipboard_append(download_link)
+                messagebox.showinfo("Copied", "Download link copied to clipboard!")
+
+            copy_btn = tk.Button(content, text="📋 Copy Download Link", command=copy_link, bg=ACCENT, fg="#FFFFFF",
+                               font=("Arial", 9, "bold"), relief=tk.FLAT, bd=0, padx=15, pady=8)
+            copy_btn.pack(anchor=tk.W)
+
+            # Send notifications
+            if notify:
+                tk.Label(content, text="📢 Sending Notifications to Machines...", bg=BG, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(20, 5))
+
+                notify_info = tk.Frame(content, bg=PANEL, relief=tk.SUNKEN, bd=1)
+                notify_info.pack(fill=tk.X, padx=5)
+
+                try:
+                    from api_client import APIClient
+                    api = APIClient(api_url="http://localhost:8000")
+                    notify_result = api.send_model_update_notifications(download_link, "Existing Model", notification_type="info")
+
+                    if notify_result.get("ok"):
+                        notify_text = f"""✓ Notifications sent successfully!
+
+• File: {file_name}
+• Download link shared with all active machines
+• Machines will auto-update when they process the notification"""
+                    else:
+                        error_msg = notify_result.get('error', 'Unknown error')
+                        notify_text = f"""⚠️ File ready, but notifications may not have been sent.
+
+Error: {error_msg}
+
+Troubleshooting:
+• Make sure the API backend is running
+• Verify at least one machine is registered and active"""
+                except Exception as e:
+                    error_str = str(e)
+                    if "Connection" in error_str or "refused" in error_str:
+                        notify_text = f"""⚠️ API Backend Not Running
+
+To enable notifications:
+1. Open terminal in C:\\BellmouthProject\\app\\
+2. Run: python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
+3. Leave it running in the background"""
+                    else:
+                        notify_text = f"""⚠️ Error sending notifications: {error_str}"""
+
+                tk.Label(notify_info, text=notify_text, bg=PANEL, fg=TEXT2, font=("Arial", 8), justify=tk.LEFT).pack(anchor=tk.W, padx=10, pady=10)
+
+            # Close button
+            close_btn = tk.Button(content, text="CLOSE", command=success_dialog.destroy, bg=PANEL, fg=TEXT,
+                                 font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=20, pady=10)
+            close_btn.pack(side=tk.LEFT, pady=(20, 0))
+            add_hover_effect(close_btn, PANEL, SEP, TEXT)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to process model:\n{str(e)}")
+
+    def _zip_and_send_models(self, mesure_exists, state_exists, mesure_ver, state_ver, upload_location, compress, notify, method="google_drive"):
+        """Zip models and upload to Google Drive or manual location"""
+        import zipfile
+        import shutil
+        from datetime import datetime
+
+        try:
+            # Check for Google Drive credentials if using Google Drive
+            if method == "google_drive":
+                # Get credentials path from config first
+                config_file = Path(__file__).parent / "config.json"
+                creds_path = None
+
+                if config_file.exists():
+                    try:
+                        config = json.loads(config_file.read_text())
+                        creds_path = config.get('google_drive', {}).get('credentials_path')
+                    except:
+                        pass
+
+                # If no config path, use default
+                if not creds_path:
+                    creds_path = str(Path(__file__).parent / "google_credentials.json")
+
+                creds_file = Path(creds_path)
+                if not creds_file.exists():
+                    messagebox.showerror("Setup Required",
+                        f"Google credentials file not found!\n\n"
+                        f"Current path: {creds_path}\n\n"
+                        "To fix:\n"
+                        "1. Click ⚙ SETTINGS (top right)\n"
+                        "2. Click 📁 BROWSE\n"
+                        "3. Select your google_credentials.json\n"
+                        "4. Check 'Enable Google Drive'\n"
+                        "5. Save settings\n\n"
+                        "Then try again!")
+                    return
+            # Create upload directory
+            upload_dir = MODELS_ROOT / "uploads"
+            upload_dir.mkdir(parents=True, exist_ok=True)
+
+            # Create zip file
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            zip_name = f"bellmouth_models_{timestamp}.zip"
+            zip_path = upload_dir / zip_name
+
+            with zipfile.ZipFile(str(zip_path), 'w', zipfile.ZIP_DEFLATED) as zipf:
+                # Add MESURE model
+                if mesure_exists:
+                    mesure_v1 = MODELS_MESURE_DIR / "CNN_BELMOUNTH_MODEL_V1.h5"
+                    mesure_v2 = MODELS_MESURE_DIR / "CNN_BELMOUNTH_MESURE_V2.h5"
+                    mesure_meta = MODELS_MESURE_DIR / "mesure_metadata.json"
+
+                    if mesure_v1.exists():
+                        zipf.write(mesure_v1, arcname=f"mesure/CNN_BELMOUNTH_MODEL_V1.h5")
+                    if mesure_v2.exists():
+                        zipf.write(mesure_v2, arcname=f"mesure/CNN_BELMOUNTH_MESURE_V2.h5")
+                    if mesure_meta.exists():
+                        zipf.write(mesure_meta, arcname=f"mesure/metadata.json")
+
+                # Add STATE model (future)
+                if state_exists:
+                    state_v1 = MODELS_MESURE_DIR / "CNN_BELMOUNTH_STATE_V1.h5"
+                    state_v2 = MODELS_MESURE_DIR / "CNN_BELMOUNTH_STATE_V2.h5"
+                    state_meta = MODELS_MESURE_DIR / "state_metadata.json"
+
+                    if state_v1.exists():
+                        zipf.write(state_v1, arcname=f"state/CNN_BELMOUNTH_STATE_V1.h5")
+                    if state_v2.exists():
+                        zipf.write(state_v2, arcname=f"state/CNN_BELMOUNTH_STATE_V2.h5")
+                    if state_meta.exists():
+                        zipf.write(state_meta, arcname=f"state/metadata.json")
+
+                # Add manifest
+                manifest = {
+                    "timestamp": timestamp,
+                    "mesure": {"exists": mesure_exists, "version": mesure_ver} if mesure_exists else None,
+                    "state": {"exists": state_exists, "version": state_ver} if state_exists else None,
+                    "zip_size_mb": zip_path.stat().st_size / (1024 * 1024)
+                }
+                zipf.writestr("MANIFEST.json", json.dumps(manifest, indent=2))
+
+            # Upload to Google Drive or use manual location
+            file_size = zip_path.stat().st_size / (1024 * 1024)
+
+            if method == "google_drive":
+                # Upload to Google Drive
+                try:
+                    from google_drive_client import GoogleDriveClient
+
+                    # Get credentials path from config
+                    config_file = Path(__file__).parent / "config.json"
+                    creds_path = None
+                    if config_file.exists():
+                        try:
+                            config = json.loads(config_file.read_text())
+                            creds_path = config.get('google_drive', {}).get('credentials_path')
+                        except:
+                            pass
+
+                    if not creds_path:
+                        creds_path = str(Path(__file__).parent / "google_credentials.json")
+
+                    drive_client = GoogleDriveClient(creds_path)
+
+                    # Show progress
+                    messagebox.showinfo("Uploading", f"Uploading to Google Drive...\n\nFile: {zip_name}\nSize: {file_size:.2f} MB\n\nA browser window may open for authentication.")
+
+                    # Upload
+                    upload_result = drive_client.upload_file(str(zip_path), file_name=zip_name)
+                    download_link = upload_result['downloadLink']
+                    # The zip is now on Drive - delete the local copy so uploads/ doesn't fill up
+                    try:
+                        zip_path.unlink()
+                    except Exception as _e:
+                        print(f"Could not delete local zip: {_e}")
+                    upload_info = {
+                        'method': 'google_drive',
+                        'drive_link': upload_result['webViewLink'],
+                        'file_id': upload_result['id']
+                    }
+                except ImportError as ie:
+                    error_detail = str(ie)
+                    messagebox.showerror("Missing Dependencies",
+                        f"Google Drive libraries not installed.\n\n"
+                        f"Error: {error_detail}\n\n"
+                        f"Fix:\n"
+                        f"1. Open a terminal/command prompt\n"
+                        f"2. Run: pip install -r requirements.txt --upgrade\n"
+                        f"3. Restart this app\n\n"
+                        f"Make sure you're using the same Python environment where this app runs.")
+                    return
+                except Exception as e:
+                    messagebox.showerror("Upload Error", f"Failed to upload to Google Drive:\n{str(e)}")
+                    return
+            else:
+                # Manual URL
+                download_link = f"{upload_location.rstrip('/')}/{zip_name}"
+                upload_info = {'method': 'manual'}
+
+            # Show success dialog with link
+            success_dialog = tk.Toplevel(self.root)
+            success_dialog.title("Models Ready to Send")
+            success_dialog.geometry("650x400")
+            success_dialog.configure(bg=BG)
+            success_dialog.resizable(False, False)
+            success_dialog.grab_set()
+
+            content = tk.Frame(success_dialog, bg=BG)
+            content.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+            tk.Label(content, text="✓ Models Packaged Successfully!", bg=BG, fg=GREEN, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
+
+            # Summary
+            summary_frame = tk.Frame(content, bg=PANEL, relief=tk.SUNKEN, bd=1)
+            summary_frame.pack(fill=tk.X, pady=(0, 20), padx=5)
+
+            upload_method_text = "☁ Google Drive" if method == "google_drive" else "📍 Manual URL"
+            summary_text = f"""📦 Package Information:
+• File: {zip_name}
+• Size: {file_size:.2f} MB
+• Models: {'MESURE V' + str(mesure_ver) if mesure_exists else ''} {', STATE V' + str(state_ver) if state_exists else ''}
+• Upload: {upload_method_text}
+• Ready to download and deploy"""
+
+            tk.Label(summary_frame, text=summary_text, bg=PANEL, fg=TEXT2, font=("Arial", 9), justify=tk.LEFT).pack(anchor=tk.W, padx=15, pady=15)
+
+            # Download link section
+            if method == "google_drive":
+                tk.Label(content, text="☁ Google Drive Link:", bg=BG, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(10, 5))
+
+                drive_link_frame = tk.Frame(content, bg=PANEL, relief=tk.SUNKEN, bd=1)
+                drive_link_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10), padx=5)
+
+                drive_link_text = tk.Text(drive_link_frame, height=2, bg=PANEL, fg=GREEN, font=("Courier", 9), relief=tk.FLAT, bd=0, wrap=tk.WORD)
+                drive_link_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+                drive_link_text.insert("1.0", upload_info.get('drive_link', ''))
+                drive_link_text.config(state=tk.DISABLED)
+
+                tk.Label(content, text="📥 Direct Download Link (for machines):", bg=BG, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(15, 5))
+            else:
+                tk.Label(content, text="📥 Download Link for Machines:", bg=BG, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(10, 5))
+
+            link_frame = tk.Frame(content, bg=PANEL, relief=tk.SUNKEN, bd=1)
+            link_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 20), padx=5)
+
+            link_text = tk.Text(link_frame, height=4, bg=PANEL, fg=ACCENT, font=("Courier", 9), relief=tk.FLAT, bd=0, wrap=tk.WORD)
+            link_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            link_text.insert("1.0", download_link)
+            link_text.config(state=tk.DISABLED)
+
+            # Copy button
+            def copy_link():
+                success_dialog.clipboard_clear()
+                success_dialog.clipboard_append(download_link)
+                messagebox.showinfo("Copied", "Download link copied to clipboard!")
+
+            copy_btn = tk.Button(content, text="📋 Copy Download Link", command=copy_link, bg=ACCENT, fg="#FFFFFF",
+                               font=("Arial", 9, "bold"), relief=tk.FLAT, bd=0, padx=15, pady=8)
+            copy_btn.pack(anchor=tk.W)
+
+            # Notification section
+            if notify:
+                tk.Label(content, text="📢 Sending Notifications to Machines...", bg=BG, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(20, 5))
+
+                notify_info = tk.Frame(content, bg=PANEL, relief=tk.SUNKEN, bd=1)
+                notify_info.pack(fill=tk.X, padx=5)
+
+                # Prepare notification content
+                models_str = f"{'MESURE' if mesure_exists else ''} {'and STATE' if state_exists and mesure_exists else 'STATE' if state_exists else ''}".strip()
+
+                # Send notifications to all machines via API
+                try:
+                    from api_client import APIClient
+                    api = APIClient(api_url="http://localhost:8000")
+                    notify_result = api.send_model_update_notifications(download_link, models_str, notification_type="info")
+
+                    if notify_result.get("ok"):
+                        notify_text = f"""✓ Notifications sent successfully!
+
+• Models: {models_str}
+• Download link shared with all active machines
+• Machines will auto-update when they process the notification
+
+Notification info:
+{notify_result.get('data', {}).get('message', 'Notifications sent')}"""
+                    else:
+                        notify_text = f"""✓ Models uploaded, but notifications may not have been sent.
+
+You can manually share this link:
+{download_link}
+
+Error: {notify_result.get('error', 'Unknown error')}"""
+                except Exception as e:
+                    notify_text = f"""✓ Models uploaded successfully!
+
+Share this download link with machines:
+{download_link}
+
+Error sending auto-notifications: {str(e)}"""
+
+                tk.Label(notify_info, text=notify_text, bg=PANEL, fg=TEXT2, font=("Arial", 8), justify=tk.LEFT).pack(anchor=tk.W, padx=10, pady=10)
+
+            # Close button
+            close_btn = tk.Button(content, text="CLOSE", command=success_dialog.destroy, bg=PANEL, fg=TEXT,
+                                 font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=20, pady=10)
+            close_btn.pack(side=tk.LEFT, pady=(20, 0))
+            add_hover_effect(close_btn, PANEL, SEP, TEXT)
+
+            messagebox.showinfo("Success", f"✓ Models packaged successfully!\n\nZip file: {zip_name}\nSize: {file_size:.2f} MB\n\nShare the download link with machines!")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to package models:\n{str(e)}")
 
     def _deploy_models_dialog(self, mesure_exists, state_exists, mesure_latest_version, state_latest_version):
         """Dialog to deploy models to machines with version selection"""
@@ -4281,13 +6259,26 @@ class CaptureEditorModal:
         self.edited_p2 = (capture.get('p2_x', 0), capture.get('p2_y', 0))
         self.original_p1 = (capture.get('p1_x', 0), capture.get('p1_y', 0))
         self.original_p2 = (capture.get('p2_x', 0), capture.get('p2_y', 0))
+        # mm-per-pixel derived from this capture's own original measurement, so
+        # the modal recomputes distance exactly the way the machine did. Falls
+        # back to the default calibration when the original data is unusable.
+        _odx = self.original_p2[0] - self.original_p1[0]
+        _ody = self.original_p2[1] - self.original_p1[1]
+        _orig_px = (_odx * _odx + _ody * _ody) ** 0.5
+        _meas_mm = capture.get('measured_distance_mm') or 0
+        self.mm_per_pixel = (_meas_mm / _orig_px) if (_orig_px and _meas_mm) else DEFAULT_MM_PER_PIXEL
+        self.expected_mm = capture.get('expected_diameter_mm')
+        self.tolerance_min = capture.get('tolerance_min')
+        self.tolerance_max = capture.get('tolerance_max')
         self.dragging_point = None
         self.thread_mode = False
         self.current_image_pil = None
         self.current_photo = None
         self.thresholded_image_pil = None
         self.thresholded_photo = None
-        self.cable_state = tk.StringVar()
+        # Pre-select the current OK / NOT OK verdict (measurement_status) so the
+        # modal reflects the saved value instead of always being blank.
+        self.cable_state = tk.StringVar(value=capture.get('measurement_status') or "")
 
         # Zoom state
         self.zoom_level = 1.0
@@ -4316,12 +6307,8 @@ class CaptureEditorModal:
 
         tk.Label(header, text=f"Edit: {self.capture.get('machine_name', 'Unknown')}", bg=PANEL, fg=TEXT, font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=15, pady=10)
         tk.Frame(header, bg=PANEL).pack(fill=tk.X, expand=True)
-
-        close_btn = tk.Button(header, text="✕", command=self.modal.destroy,
-                             bg=RED, fg="#FFFFFF", font=("Arial", 14, "bold"),
-                             relief=tk.FLAT, bd=0, padx=10, pady=5)
-        close_btn.pack(side=tk.RIGHT, padx=10)
-        add_hover_effect(close_btn, RED, "#8B0F15", "#FFFFFF")
+        # Close is handled by the window's native title-bar button and the
+        # CANCEL button below — no extra custom ✕ here.
 
         # Main content
         main = tk.Frame(self.modal, bg=BG)
@@ -4373,6 +6360,11 @@ class CaptureEditorModal:
 
         tk.Label(right, text="EDIT ANNOTATION", bg=PANEL, fg=TEXT, font=("Arial", 11, "bold")).pack(anchor=tk.W, padx=15, pady=(15, 10))
 
+        # Switch target — the distance this cable is expected to measure.
+        target_txt = f"{self.expected_mm} mm" if self.expected_mm is not None else "N/A"
+        tk.Label(right, text="SWITCH TARGET DISTANCE", bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 5))
+        tk.Label(right, text=target_txt, bg=PANEL, fg=TEXT, font=("Consolas", 11, "bold")).pack(anchor=tk.W, padx=20, pady=(0, 12))
+
         # Original points
         tk.Label(right, text="ORIGINAL POINTS", bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 5))
         self.orig_lbl = tk.Label(right, text="P1: (0, 0)\nP2: (0, 0)", bg=PANEL, fg=TEXT2, font=("Consolas", 8), justify=tk.LEFT)
@@ -4380,31 +6372,45 @@ class CaptureEditorModal:
 
         # Edited points
         tk.Label(right, text="EDITED POINTS", bg=PANEL, fg=ACCENT, font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 5))
-        self.edit_lbl = tk.Label(right, text="P1: (0, 0)\nP2: (0, 0)\nDistance: 0 px", bg=PANEL, fg=ACCENT, font=("Consolas", 8), justify=tk.LEFT)
+        self.edit_lbl = tk.Label(right, text="P1: (0, 0)\nP2: (0, 0)\nDistance: 0.00 mm", bg=PANEL, fg=ACCENT, font=("Consolas", 8), justify=tk.LEFT)
         self.edit_lbl.pack(anchor=tk.W, padx=20, pady=(0, 15))
 
         tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X, pady=10, padx=15)
 
-        # Cable state
+        # Cable state (OK / NOT OK) — read-only badge, auto-computed from the
+        # edited distance vs the switch tolerance. Not user-clickable.
         tk.Label(right, text="CABLE STATE", bg=PANEL, fg=TEXT, font=("Arial", 10, "bold")).pack(anchor=tk.W, padx=15, pady=(0, 10))
 
-        states = [("🔴 No Cable", "no_cable"), ("🟠 Male End", "cable_male"), ("🟢 Good Cable", "cable_good")]
-        for label, value in states:
-            tk.Radiobutton(right, text=label, variable=self.cable_state, value=value,
-                          bg=PANEL, fg=TEXT, font=("Arial", 9),
-                          selectcolor=ACCENT, activebackground=PANEL, activeforeground=ACCENT).pack(anchor=tk.W, padx=25, pady=2)
+        self.state_indicator = tk.Label(right, text="—", bg=PANEL, fg=TEXT2,
+                                        font=("Arial", 11, "bold"), padx=14, pady=8)
+        self.state_indicator.pack(anchor=tk.W, padx=25, pady=(0, 4))
+
+        def refresh_state_rows():
+            verdict = self.cable_state.get()
+            if verdict == "okay":
+                self.state_indicator.config(text="CABLE OK", bg=GREEN, fg="#FFFFFF")
+            elif verdict == "not_okay":
+                self.state_indicator.config(text="CABLE NOT OK", bg=RED, fg="#FFFFFF")
+            else:
+                self.state_indicator.config(text="—", bg=PANEL, fg=TEXT2)
+
+        # Exposed so the drag handler / reset can refresh the badge as points move.
+        self._refresh_state_rows = refresh_state_rows
+        refresh_state_rows()
 
         tk.Frame(right, bg=BORDER, height=1).pack(fill=tk.X, pady=10, padx=15)
 
         # Save button
+        # Enabled from the start: the annoteur may save after editing the points
+        # OR just the cable state, so Save must not depend on dragging a point.
         self.save_btn = tk.Button(right, text="✓ SAVE", command=self._save_changes,
                                  bg=GREEN, fg="#FFFFFF", font=("Arial", 10, "bold"),
-                                 relief=tk.FLAT, bd=0, padx=20, pady=12, state=tk.DISABLED)
+                                 relief=tk.FLAT, bd=0, padx=20, pady=12)
         self.save_btn.pack(fill=tk.X, padx=15, pady=(0, 8))
         add_hover_effect(self.save_btn, GREEN, "#3E7C3F", "#FFFFFF")
 
         # Cancel button
-        cancel_btn = tk.Button(right, text="✕ CANCEL", command=self.modal.destroy,
+        cancel_btn = tk.Button(right, text="CANCEL", command=self.modal.destroy,
                               bg=TEXT2, fg="#FFFFFF", font=("Arial", 10, "bold"),
                               relief=tk.FLAT, bd=0, padx=20, pady=12)
         cancel_btn.pack(fill=tk.X, padx=15)
@@ -4412,17 +6418,33 @@ class CaptureEditorModal:
 
     def _load_image(self):
         """Load the capture images (original and thresholded)"""
-        # Load original image
-        image_path = self.capture.get('image_original_path', '')
-        if image_path and Path(image_path).exists():
-            try:
-                self.current_image_pil = Image.open(image_path).convert('RGB')
-                print(f"✓ Loaded original image: {image_path}")
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to load original image: {str(e)}")
-                return
-        else:
-            messagebox.showerror("Error", "Image file not found")
+        # Primary path: download the original image from the server over HTTP so
+        # this works from any machine, not just the one hosting the files.
+        self.current_image_pil = None
+        capture_id = self.capture.get('id')
+        if capture_id and self.api_client:
+            img_bytes = self.api_client.get_capture_image(capture_id, kind="original")
+            if img_bytes:
+                try:
+                    self.current_image_pil = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+                    print(f"✓ Downloaded original image for capture {capture_id}")
+                except Exception as e:
+                    print(f"✗ Could not decode downloaded image: {e}")
+                    self.current_image_pil = None
+
+        # Fallback: a local copy on this same machine (dev / offline).
+        if self.current_image_pil is None:
+            image_path = self.capture.get('image_original_path', '')
+            if image_path and Path(image_path).exists():
+                try:
+                    self.current_image_pil = Image.open(image_path).convert('RGB')
+                    print(f"✓ Loaded original image locally: {image_path}")
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to load original image: {str(e)}")
+                    return
+
+        if self.current_image_pil is None:
+            messagebox.showerror("Error", "Could not load the capture image from the server.")
             return
 
         # ALWAYS generate thresholded image from original (don't rely on API paths)
@@ -4573,7 +6595,25 @@ class CaptureEditorModal:
 
         self.last_drag_x = event.x
         self.last_drag_y = event.y
+        if not self.panning:
+            self._auto_evaluate_state()
         self._redraw_canvas()
+
+    def _auto_evaluate_state(self):
+        """Recompute the CABLE OK / NOT OK verdict from the edited distance vs the
+        switch tolerance, so fixing the annotation flips the state automatically.
+        No-ops if the switch tolerance wasn't provided by the API."""
+        if self.tolerance_min is None or self.tolerance_max is None:
+            return
+        if not (self.edited_p1 and self.edited_p2):
+            return
+        dist_px = ((self.edited_p2[0] - self.edited_p1[0]) ** 2 +
+                   (self.edited_p2[1] - self.edited_p1[1]) ** 2) ** 0.5
+        dist_mm = dist_px * self.mm_per_pixel
+        verdict = "okay" if (self.tolerance_min <= dist_mm <= self.tolerance_max) else "not_okay"
+        self.cable_state.set(verdict)
+        if hasattr(self, "_refresh_state_rows"):
+            self._refresh_state_rows()
 
     def _on_canvas_release(self, event):
         """Stop dragging point or panning"""
@@ -4602,11 +6642,19 @@ class CaptureEditorModal:
             self._redraw_canvas()
 
     def _zoom_reset(self):
-        """Reset zoom to 1.0x and reset pan"""
+        """Reset the view (zoom/pan) AND revert the edited keypoints and verdict
+        back to the capture's original values."""
         self.zoom_level = 1.0
         self.pan_x = 0
         self.pan_y = 0
         self.zoom_lbl.config(text="1.0x")
+        # Revert the annotation to the original.
+        self.edited_p1 = self.original_p1
+        self.edited_p2 = self.original_p2
+        self.cable_state.set(self.capture.get('measurement_status') or "")
+        if hasattr(self, "_refresh_state_rows"):
+            self._refresh_state_rows()
+        self._update_display()
         self._redraw_canvas()
 
     def _toggle_thread_mode(self):
@@ -4643,8 +6691,9 @@ class CaptureEditorModal:
         self.orig_lbl.config(text=f"P1: {self.original_p1}\nP2: {self.original_p2}")
 
         if self.edited_p1 and self.edited_p2:
-            dist = ((self.edited_p2[0]-self.edited_p1[0])**2 + (self.edited_p2[1]-self.edited_p1[1])**2)**0.5
-            self.edit_lbl.config(text=f"P1: {self.edited_p1}\nP2: {self.edited_p2}\nDistance: {dist:.0f} px")
+            dist_px = ((self.edited_p2[0]-self.edited_p1[0])**2 + (self.edited_p2[1]-self.edited_p1[1])**2)**0.5
+            dist_mm = dist_px * self.mm_per_pixel
+            self.edit_lbl.config(text=f"P1: {self.edited_p1}\nP2: {self.edited_p2}\nDistance: {dist_mm:.2f} mm")
 
     def _enable_save_button(self):
         """Enable save button if changes detected"""
@@ -4654,17 +6703,19 @@ class CaptureEditorModal:
     def _save_changes(self):
         """Save edited annotation"""
         try:
+            # Save only updates the edited keypoint coordinates. Approval is a
+            # separate, explicit action (the ACCEPT button in the queue) so that
+            # editing a capture never removes it from the annoteur's queue.
             payload = {
                 "p1_x": int(self.edited_p1[0]),
                 "p1_y": int(self.edited_p1[1]),
                 "p2_x": int(self.edited_p2[0]),
                 "p2_y": int(self.edited_p2[1]),
-                "annoteur_approved": True,
-                "cable_state": self.cable_state.get() or self.capture.get('cable_state', 'cable_good')
+                "measurement_status": self.cable_state.get() or self.capture.get('measurement_status', 'okay')
             }
 
             self.api_client.put(f"/admin/captures/{self.capture.get('id')}/annotate", payload)
-            messagebox.showinfo("Success", "Annotation saved!")
+            messagebox.showinfo("Success", "Coordinates updated!")
             self.modal.destroy()
             if self.on_save_callback:
                 self.on_save_callback()
@@ -4697,15 +6748,18 @@ class AnnoteurInteractiveApp:
         # NOW create StringVar after root exists
         self.content_container = None
 
-        # Initialize camera (like MainApp)
+        # Camera attributes kept as no-op placeholders so shutdown/cleanup code
+        # stays safe. The annoteur UI (captures / notifications / reclamations)
+        # never uses the camera, so we deliberately do NOT open it here — that
+        # avoids grabbing the Dino-Lite device just because someone logged in
+        # as an annoteur.
         self.cap = None
         self.pixel_measure = None
         self.camera_ok = False
         self.current_frame = None
         self.frame_count = 0
         self.last_zoom = 1.0
-        self._loop_running = True
-        self._init_camera()
+        self._loop_running = False
 
         self._build_ui()
 
@@ -4730,8 +6784,6 @@ class AnnoteurInteractiveApp:
 
         nav_items = [
             ("BELLMOUNTH CAPTURES", "annotation"),
-            ("STATE CABLE", "statecable"),
-            ("STATE CAPTURES", "state_captures"),
             ("NOTIFICATIONS", "notification"),
             ("RECLAMATIONS", "reclamation")
         ]
@@ -4752,8 +6804,8 @@ class AnnoteurInteractiveApp:
         # Show initial page
         self._switch_page("annotation")
 
-        # Start persistent camera loop after UI is built
-        self._update_camera_loop()
+        # No camera loop for the annoteur — the camera is never opened for this
+        # role, so there is nothing to poll.
 
         # Handle window close
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
@@ -4822,10 +6874,6 @@ class AnnoteurInteractiveApp:
         # Show appropriate page
         if page_id == "annotation":
             self._show_annotation_page()
-        elif page_id == "statecable":
-            self._show_statecable_page()
-        elif page_id == "state_captures":
-            self._show_state_captures_page()
         elif page_id == "notification":
             self._show_notification_page()
         elif page_id == "reclamation":
@@ -4833,6 +6881,11 @@ class AnnoteurInteractiveApp:
 
     def _show_annotation_page(self):
         """Display table of pending captures"""
+        # Clear any existing content first so a refresh (e.g. after saving in the
+        # editor modal) replaces the table instead of stacking a second one.
+        for widget in self.content_container.winfo_children():
+            widget.destroy()
+
         frame = tk.Frame(self.content_container, bg=BG)
         frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
@@ -4842,7 +6895,7 @@ class AnnoteurInteractiveApp:
         header = tk.Frame(frame, bg=PANEL)
         header.pack(fill=tk.X, pady=(0, 10))
 
-        cols = [("MACHINE", 15), ("DATE", 18), ("SWITCH", 15), ("STATE", 10), ("VIEW", 8), ("ACTION", 20)]
+        cols = [("MACHINE", 15), ("DATE", 18), ("SWITCH", 15), ("METHOD", 10), ("STATE", 10), ("VIEW", 8), ("ACTION", 20)]
         for col_name, width in cols:
             tk.Label(header, text=col_name, bg=PANEL, fg=TEXT2, font=("Arial", 9, "bold"), width=width, anchor="w").pack(side=tk.LEFT, padx=10, pady=10)
 
@@ -4864,8 +6917,11 @@ class AnnoteurInteractiveApp:
         canvas_scroll.create_window((0, 0), window=rows_frame, anchor="nw")
 
         try:
-            # Get all captures (both pending and approved for review)
-            response = self.api_client.get("/admin/captures")
+            # Only this annoteur's assigned captures that still need verifying.
+            # Captures are split fairly across annoteurs by the server at upload time.
+            response = self.api_client.get(
+                f"/admin/captures?status=pending&annoteur_id={self.user_id}"
+            )
             captures = response if isinstance(response, list) else []
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load captures: {str(e)}")
@@ -4880,13 +6936,30 @@ class AnnoteurInteractiveApp:
                 machine = capture.get('machine_name', 'N/A')
                 date_str = ((capture.get('created_at') or 'N/A')[:10]) if capture.get('created_at') else 'N/A'
                 switch = capture.get('switch_name', 'N/A')
-                state = capture.get('cable_state', 'PENDING')
-                state_color = GREEN if state == "cable_good" else AMBER if state == "cable_male" else RED
+                # How the capture was taken: auto_cnn -> AUTO, manual -> MANUAL.
+                method_raw = capture.get('capture_method', '')
+                if method_raw == "auto_cnn":
+                    method_text, method_color = "AUTO", "#FF9800"    # amber (AI/auto)
+                elif method_raw == "manual":
+                    method_text, method_color = "MANUAL", "#607D8B"  # blue-grey (human)
+                else:
+                    method_text, method_color = "—", TEXT2
+                # Show whether the measurement was within the switch tolerance.
+                m_status = capture.get('measurement_status', 'unknown')
+                if m_status == "okay":
+                    state, state_color = "CABLE OK", GREEN
+                elif m_status == "not_okay":
+                    state, state_color = "CABLE NOT OK", RED
+                else:
+                    state, state_color = "—", TEXT2
 
                 # Columns
                 tk.Label(row, text=machine, bg=CARD, fg=TEXT, font=("Arial", 9), width=15, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
                 tk.Label(row, text=date_str, bg=CARD, fg=TEXT, font=("Arial", 9), width=18, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
                 tk.Label(row, text=switch, bg=CARD, fg=TEXT, font=("Arial", 9), width=15, anchor="w").pack(side=tk.LEFT, padx=10, pady=8)
+
+                method_lbl = tk.Label(row, text=method_text, bg=method_color, fg="#FFFFFF", font=("Arial", 8, "bold"), width=10, anchor="center")
+                method_lbl.pack(side=tk.LEFT, padx=10, pady=8)
 
                 state_lbl = tk.Label(row, text=state.upper(), bg=state_color, fg="#FFFFFF", font=("Arial", 8, "bold"), width=10, anchor="center")
                 state_lbl.pack(side=tk.LEFT, padx=10, pady=8)
@@ -4947,13 +7020,19 @@ class AnnoteurInteractiveApp:
                 messagebox.showerror("Error", f"Failed to accept capture: {str(e)}")
 
     def _refuse_capture(self, capture):
-        """Refuse a capture"""
+        """Refuse a capture — delete it (row + image files) from the queue."""
         result = messagebox.askyesno("Confirm", f"Refuse capture from {capture.get('machine_name', 'Unknown')}?")
         if result:
             try:
-                self.api_client.put(f"/admin/captures/{capture.get('id')}/reject", {})
-                messagebox.showinfo("Success", "Capture refused")
-                self._refresh_annotation_page()
+                resp = self.api_client.delete_capture(capture.get('id'))
+                if resp and resp.get("ok"):
+                    # Re-fetch the queue first so the deleted row visibly
+                    # disappears the moment the confirmation is dismissed.
+                    self._refresh_annotation_page()
+                    messagebox.showinfo("Success", "Capture refused")
+                else:
+                    err = (resp or {}).get("error") or (resp or {}).get("detail") or "Unknown error"
+                    messagebox.showerror("Error", f"Failed to refuse capture: {err}")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to refuse capture: {str(e)}")
 

@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime
 import os
 import uuid
 from database import get_db
-from models import Capture, User, Switch
+from models import Capture, User, UserRole, Switch
 from schemas import CaptureResponse, CaptureUploadRequest
 
 router = APIRouter(prefix="/captures", tags=["captures"])
@@ -14,6 +15,29 @@ CAPTURES_DIR = os.getenv("CAPTURES_DIR", "./captures")
 os.makedirs(CAPTURES_DIR, exist_ok=True)
 os.makedirs(f"{CAPTURES_DIR}/original", exist_ok=True)
 os.makedirs(f"{CAPTURES_DIR}/thresholded", exist_ok=True)
+
+
+def _pick_least_busy_annoteur(db: Session):
+    """Return the id of the active annoteur with the fewest captures still
+    awaiting verification, or None if there are no active annoteurs.
+
+    Ties (e.g. everyone at zero) are broken by annoteur id so assignment is
+    deterministic and rotates evenly as counts grow."""
+    annoteurs = db.query(User).filter(
+        User.role == UserRole.annoteur,
+        User.is_active == True
+    ).all()
+    if not annoteurs:
+        return None
+
+    def pending_count(annoteur):
+        return db.query(Capture).filter(
+            Capture.annoteur_id == annoteur.id,
+            Capture.annoteur_approved == False
+        ).count()
+
+    chosen = min(annoteurs, key=lambda a: (pending_count(a), a.id))
+    return chosen.id
 
 @router.post("/upload")
 def upload_capture(
@@ -27,6 +51,7 @@ def upload_capture(
     capture_method: str = Form(...),
     measurement_status: str = Form(...),
     delta_mm: float = Form(...),
+    zoom_level: float = Form(None),
     image_original: UploadFile = File(...),
     image_thresholded: UploadFile = File(...),
     db: Session = Depends(get_db)
@@ -56,6 +81,11 @@ def upload_capture(
         with open(thresholded_path, "wb") as f:
             f.write(image_thresholded.file.read())
 
+        # Fair auto-assignment: give this capture to the active annoteur who
+        # currently has the fewest captures still waiting to be verified. This
+        # keeps the workload split evenly across all annoteurs.
+        assigned_annoteur_id = _pick_least_busy_annoteur(db)
+
         # Create capture record
         capture = Capture(
             machine_id=machine_id,
@@ -67,10 +97,11 @@ def upload_capture(
             p2_x=p2_x,
             p2_y=p2_y,
             measured_distance_mm=measured_value_mm,
+            zoom_level=zoom_level,
             capture_method=capture_method,
             measurement_status=measurement_status,
             delta_mm=delta_mm,
-            annoteur_id=None,  # Will be assigned by admin
+            annoteur_id=assigned_annoteur_id,  # balanced across annoteurs
             annoteur_approved=False,
             in_training_dataset=False
         )
@@ -87,6 +118,21 @@ def upload_capture(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/{capture_id}/image")
+def get_capture_image(capture_id: str, kind: str = "original", db: Session = Depends(get_db)):
+    """Stream a capture's image file over HTTP so clients on other machines can
+    see it. `kind` is 'original' or 'thresholded'. The server reads the file
+    from its own disk — clients never touch server filesystem paths."""
+    capture = db.query(Capture).filter(Capture.id == capture_id).first()
+    if not capture:
+        raise HTTPException(status_code=404, detail="Capture not found")
+
+    path = capture.image_thresholded_path if kind == "thresholded" else capture.image_original_path
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"{kind} image file not found on server")
+
+    return FileResponse(path, media_type="image/png")
 
 @router.get("/queue", response_model=List[CaptureResponse])
 def get_capture_queue(annoteur_id: str, db: Session = Depends(get_db)):

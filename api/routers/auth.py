@@ -13,7 +13,12 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
     # Try to find as regular user
     user = db.query(User).filter(User.username == request.username).first()
 
-    if user and verify_password(request.password, user.password_hash) and user.is_active:
+    if user and verify_password(request.password, user.password_hash):
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your account is deactivated"
+            )
         token = create_access_token({"sub": user.id, "role": user.role})
         return LoginResponse(
             access_token=token,
@@ -28,6 +33,11 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
     machine = db.query(Machine).filter(Machine.machine_name == request.username).first()
 
     if machine and verify_password(request.password, machine.password_hash):
+        if not machine.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your account is deactivated"
+            )
         token = create_access_token({"sub": machine.id, "role": "machine_user"})
         return LoginResponse(
             access_token=token,

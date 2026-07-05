@@ -254,30 +254,68 @@ def delete_switch(switch_id: str, db: Session = Depends(get_db)):
 # ==================== CAPTURES ====================
 
 @router.get("/captures")
-def get_captures(status: Optional[str] = Query(None), db: Session = Depends(get_db)):
-    """Get all captures, optionally filtered by status (pending|assigned|approved)"""
-    from models import Switch
+def get_captures(
+    status: Optional[str] = Query(None),
+    annoteur_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Get captures, optionally filtered by status (pending|verified|dataset|approved)
+    and/or by the annoteur they are assigned to."""
+    from models import Switch, Machine, User
     import json
 
-    query = db.query(Capture, Switch.expected_diameter_mm).join(
+    query = db.query(
+        Capture,
+        Switch.expected_diameter_mm,
+        Switch.switch_name,
+        Machine.machine_name,
+        Switch.tolerance_min,
+        Switch.tolerance_max,
+        User.username,
+    ).join(
         Switch, Capture.switch_id == Switch.id, isouter=True
+    ).join(
+        Machine, Capture.machine_id == Machine.id, isouter=True
+    ).join(
+        User, Capture.annoteur_id == User.id, isouter=True
     )
 
+    # Restrict to a single annoteur's assigned captures when requested.
+    if annoteur_id:
+        query = query.filter(Capture.annoteur_id == annoteur_id)
+
     if status == "pending":
-        query = query.filter(Capture.annoteur_id == None)
-    elif status == "assigned":
+        # Awaiting annoteur verification (stage 1).
+        query = query.filter(Capture.annoteur_approved == False)
+    elif status == "verified":
+        # Annoteur verified, awaiting admin confirmation into the database (stage 2).
         query = query.filter(
-            (Capture.annoteur_id != None) & (Capture.annoteur_approved == False)
+            (Capture.annoteur_approved == True) & (Capture.in_training_dataset == False)
         )
+    elif status == "dataset":
+        # Confirmed by admin — part of the training database.
+        query = query.filter(Capture.in_training_dataset == True)
     elif status == "approved":
         query = query.filter(Capture.annoteur_approved == True)
 
     results = []
-    for capture, expected_mm in query.all():
-        capture_dict = {k: v for k, v in capture.__dict__.items() if not k.startswith('_sa_')}
-        capture_dict['expected_diameter_mm'] = expected_mm
-        response_obj = CaptureAdminResponse(**capture_dict)
-        results.append(json.loads(response_obj.json()))
+    for capture, expected_mm, switch_name, machine_name, tol_min, tol_max, annoteur_username in query.all():
+        try:
+            capture_dict = {k: v for k, v in capture.__dict__.items() if not k.startswith('_sa_')}
+            capture_dict['expected_diameter_mm'] = expected_mm
+            capture_dict['switch_name'] = switch_name
+            capture_dict['machine_name'] = machine_name
+            capture_dict['tolerance_min'] = tol_min
+            capture_dict['tolerance_max'] = tol_max
+            capture_dict['annoteur_name'] = annoteur_username
+            response_obj = CaptureAdminResponse(**capture_dict)
+            results.append(json.loads(response_obj.json()))
+        except Exception as row_error:
+            # One malformed capture must never take down the whole queue for an
+            # annoteur. Skip it, log it, and keep serving the rest.
+            print(f"[captures] skipping unserializable capture "
+                  f"{getattr(capture, 'id', '?')}: {row_error}")
+            continue
 
     return results
 
@@ -299,12 +337,15 @@ def assign_capture(capture_id: str, body: AssignCaptureRequest, db: Session = De
 
 @router.put("/captures/{capture_id}/approve", response_model=CaptureAdminResponse)
 def approve_capture(capture_id: str, db: Session = Depends(get_db)):
-    """Approve a capture"""
+    """Admin confirmation (stage 2): promote an annoteur-verified capture into
+    the training database."""
     capture = db.query(Capture).filter(Capture.id == capture_id).first()
     if not capture:
         raise HTTPException(404, "Capture not found")
 
+    # Only annoteur-verified captures should reach this stage.
     capture.annoteur_approved = True
+    capture.in_training_dataset = True
     db.commit()
     db.refresh(capture)
     return capture
@@ -315,6 +356,7 @@ class CaptureAnnotateRequest(BaseModel):
     p2_x: Optional[int] = None
     p2_y: Optional[int] = None
     cable_state: Optional[str] = None
+    measurement_status: Optional[str] = None
     annoteur_approved: Optional[bool] = None
 
 @router.put("/captures/{capture_id}/annotate", response_model=CaptureAdminResponse)
@@ -333,6 +375,14 @@ def annotate_capture(capture_id: str, body: CaptureAnnotateRequest, db: Session 
         capture.p2_x = body.p2_x
     if body.p2_y is not None:
         capture.p2_y = body.p2_y
+
+    # Persist the annoteur's cable state label.
+    if body.cable_state is not None:
+        capture.cable_state = body.cable_state
+
+    # Persist the annoteur's OK / NOT OK verdict (drives the queue STATE column).
+    if body.measurement_status is not None:
+        capture.measurement_status = body.measurement_status
 
     # Update approval status
     if body.annoteur_approved is not None:

@@ -33,7 +33,16 @@ def classify_error(exception, response=None):
         return "server_down"
     elif isinstance(exception, requests.Timeout):
         return "server_down"
-    elif response and response.status_code in [401, 403]:
+    elif response and response.status_code == 403:
+        # Check if it's a deactivation error
+        try:
+            detail = response.json().get("detail", "")
+            if "deactivated" in detail.lower():
+                return "account_deactivated"
+        except:
+            pass
+        return "auth_error"
+    elif response and response.status_code == 401:
         return "auth_error"
     elif response and response.status_code >= 500:
         return "server_error"
@@ -213,7 +222,8 @@ class APIClient:
         measurement_status: str,
         delta_mm: float,
         image_original_path: str,
-        image_thresholded_path: str
+        image_thresholded_path: str,
+        zoom_level: float = None
     ) -> Dict[str, Any]:
         """Upload a measurement capture."""
         try:
@@ -236,12 +246,25 @@ class APIClient:
                     "measurement_status": measurement_status,
                     "delta_mm": delta_mm
                 }
+                # Only send zoom when we actually have it, so old servers that
+                # don't know the field simply ignore its absence.
+                if zoom_level is not None:
+                    data["zoom_level"] = zoom_level
+
+                # For multipart uploads we must NOT force Content-Type:
+                # application/json — requests sets the correct
+                # "multipart/form-data; boundary=..." header itself. Keep only
+                # the auth/API-key headers.
+                upload_headers = {
+                    k: v for k, v in self._get_headers().items()
+                    if k.lower() != "content-type"
+                }
 
                 response = requests.post(
                     f"{self.api_url}/captures/upload",
                     data=data,
                     files=files,
-                    headers=self._get_headers(),
+                    headers=upload_headers,
                     timeout=15
                 )
 
@@ -284,6 +307,30 @@ class APIClient:
                 "error": str(e),
                 "details": str(e)
             }
+
+    def get_capture_image(self, capture_id: str, kind: str = "original"):
+        """Download a capture image from the server as raw bytes.
+
+        kind = 'original' or 'thresholded'. Returns the image bytes on success,
+        or None if it could not be fetched (caller can fall back to a local
+        copy). This is what lets annoteur/admin machines see images that
+        physically live on the server."""
+        try:
+            headers = {
+                k: v for k, v in self._get_headers().items()
+                if k.lower() != "content-type"
+            }
+            response = requests.get(
+                f"{self.api_url}/captures/{capture_id}/image",
+                params={"kind": kind},
+                headers=headers,
+                timeout=15,
+            )
+            if response.status_code == 200:
+                return response.content
+            return None
+        except Exception:
+            return None
 
     def get_capture_queue(self, annoteur_id: str) -> list:
         """Get captures assigned to this annoteur."""
@@ -693,6 +740,71 @@ class APIClient:
         except Exception as e:
             return {"ok": False, "error_type": "unknown", "error": str(e), "details": str(e)}
 
+    def delete_notification(self, notification_id: str) -> Dict[str, Any]:
+        """Delete a single notification by ID."""
+        try:
+            response = requests.delete(
+                f"{self.api_url}/notifications/{notification_id}",
+                headers=self._get_headers(),
+                timeout=5
+            )
+            if response.status_code == 200:
+                return {"ok": True}
+            return {"ok": False, "error": response.text}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def submit_report(self, machine_name: str, title: str, description: str, category: str = "other") -> Dict[str, Any]:
+        """Submit an issue report from the machine panel to the admin notifications."""
+        try:
+            response = requests.post(
+                f"{self.api_url}/notifications/report",
+                json={
+                    "machine_name": machine_name,
+                    "title": title,
+                    "description": description,
+                    "category": category,
+                },
+                headers=self._get_headers(),
+                timeout=10
+            )
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("ok"):
+                    return {"ok": True, "data": result}
+                return {"ok": False, "error": result.get("error", "Failed to submit report")}
+            return {"ok": False, "error": response.text}
+        except requests.ConnectionError as e:
+            return {"ok": False, "error": "Cannot connect to server", "details": str(e)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def send_model_update_notifications(self, download_link: str, models: str = "MESURE, STATE", notification_type: str = "info") -> Dict[str, Any]:
+        """Send model update notifications to all active machines.
+
+        Args:
+            download_link: The download link for the model
+            models: Description of models being updated
+            notification_type: Type of notification (mesure-upload, state-upload, or info)
+        """
+        try:
+            response = requests.post(
+                f"{self.api_url}/notifications/send-models",
+                json={
+                    "download_link": download_link,
+                    "models": models,
+                    "notification_type": notification_type
+                },
+                headers=self._get_headers(),
+                timeout=10
+            )
+            if response.status_code == 200:
+                return {"ok": True, "data": response.json()}
+            else:
+                return {"ok": False, "error": response.json().get("error", "Failed to send notifications")}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     # ==================== GENERIC HTTP METHODS ====================
 
     def get(self, path: str, params: Dict = None) -> Any:
@@ -713,18 +825,31 @@ class APIClient:
             return None
 
     def put(self, path: str, data: Dict) -> Any:
-        """Generic PUT request."""
+        """Generic PUT request.
+
+        Raises RuntimeError on any non-2xx response (or network failure) so a
+        caller can never mistake a server-side rejection for success. The
+        exception message carries the server's error detail when available.
+        Callers are expected to wrap this in try/except.
+        """
+        url = f"{self.api_url}{path}" if path.startswith('/') else f"{self.api_url}/{path}"
         try:
-            url = f"{self.api_url}{path}" if path.startswith('/') else f"{self.api_url}/{path}"
             response = requests.put(
                 url,
                 json=data,
                 headers=self._get_headers(),
                 timeout=5
             )
-            if response.status_code in [200, 201]:
-                return response.json()
-            return None
         except Exception as e:
-            print(f"PUT error: {e}")
-            return None
+            raise RuntimeError(f"Could not reach server: {e}")
+
+        if response.status_code in [200, 201]:
+            return response.json()
+
+        # Non-2xx: surface the server's error detail instead of swallowing it.
+        detail = None
+        try:
+            detail = response.json().get("detail")
+        except Exception:
+            detail = (response.text or "").strip()
+        raise RuntimeError(detail or f"HTTP {response.status_code}")
