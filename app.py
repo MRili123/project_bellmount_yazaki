@@ -18,8 +18,7 @@ import numpy as np
 from PIL import Image, ImageTk
 import requests
 
-sys.path.insert(0, os.path.join(os.path.expanduser("~"), "Desktop", "model_bellmounth_mesure"))
-from utils import apply_threshold
+from threshold_utils import apply_threshold
 
 from camera_setup import get_camera
 from pixelmeasure import PixelMeasure, DEFAULT_MM_PER_PIXEL
@@ -48,14 +47,84 @@ TEXT2   = "#666666"
 SEP     = "#E8E8E8"
 
 # ==================== CONFIG ====================
-CONFIG_FILE = Path(__file__).parent / "config.json"
+# App folder: next to app.py in development, next to the .exe when packaged
+# with PyInstaller — so config.json, .env, api/ and models/ stay editable
+# files beside the executable.
+if getattr(sys, "frozen", False):
+    APP_DIR = Path(sys.executable).parent
+else:
+    APP_DIR = Path(__file__).parent
+
+CONFIG_FILE = APP_DIR / "config.json"
+ICON_FILE = APP_DIR / "app_icon.ico"
+
+# Give every Tk window the Yazaki telescope icon (title bar + taskbar)
+# without having to touch each of the many tk.Tk() call sites.
+_orig_tk_init = tk.Tk.__init__
+
+def _tk_init_with_icon(self, *args, **kwargs):
+    _orig_tk_init(self, *args, **kwargs)
+    if ICON_FILE.exists():
+        try:
+            self.iconbitmap(default=str(ICON_FILE))
+        except Exception:
+            pass
+
+tk.Tk.__init__ = _tk_init_with_icon
+
+
+def uninstall_app(root=None):
+    """Delete the app from this device by launching the installer's uninstaller
+    (created by Inno Setup at install time). Confirms first, then quits so the
+    uninstaller can remove the files."""
+    from tkinter import messagebox
+    import subprocess
+
+    if not messagebox.askyesno(
+            "Uninstall Bellmounth",
+            "This will remove Yazaki Bellmounth Mesure from this computer.\n\n"
+            "Your cloud data (accounts, measurements) is NOT affected — only "
+            "this app is removed from this PC.\n\nContinue?",
+            icon="warning"):
+        return
+
+    uninstaller = None
+    for name in ("unins000.exe", "unins001.exe"):
+        candidate = APP_DIR / name
+        if candidate.exists():
+            uninstaller = candidate
+            break
+
+    if uninstaller is None:
+        messagebox.showinfo(
+            "Uninstall",
+            "No uninstaller found.\n\nThis happens when the app is run directly "
+            "(development mode) rather than installed from the setup file. "
+            "Installed copies can be removed here or from Windows Settings → Apps.")
+        return
+
+    try:
+        subprocess.Popen([str(uninstaller)], cwd=str(APP_DIR))
+    except Exception as e:
+        messagebox.showerror("Uninstall failed", f"Could not start uninstaller:\n{e}")
+        return
+
+    # Close the app so the uninstaller can delete its files.
+    try:
+        if root is not None:
+            root.destroy()
+    except Exception:
+        pass
+    sys.exit(0)
+
+
 # Dataset is now on C: drive (NOT in OneDrive to avoid permission issues)
 DATASET_DIR = Path("C:/BellmouthProject/dataset")
 ORIG_DIR = DATASET_DIR / "original"
 THRESH_DIR = DATASET_DIR / "thresholded"
 ANNOTATIONS_FILE = DATASET_DIR / "annotations.json"
 # Models folder - separate from model_bellmounth_mesure
-MODELS_ROOT = Path(__file__).parent / "models"
+MODELS_ROOT = APP_DIR / "models"
 MODELS_MESURE_DIR = MODELS_ROOT / "mesure"
 MODEL_PATH = MODELS_MESURE_DIR / "CNN_BELMOUNTH_MODEL_V1.h5"
 
@@ -197,7 +266,8 @@ class SetupWindow:
     SETUP_RED = "#AF151D"
     SETUP_GREEN = "#4CAF50"
 
-    def __init__(self):
+    def __init__(self, current_url=None):
+        self.current_url = current_url
         self.window = tk.Tk()
         self.window.title("Bellmounth Setup")
         self.window.geometry("600x500")
@@ -217,7 +287,9 @@ class SetupWindow:
         tk.Label(main, text="BELLMOUNTH SETUP", bg=self.SETUP_BG, fg=self.SETUP_TEXT,
                 font=("Arial", 18, "bold")).pack(anchor=tk.W, pady=(0, 10))
 
-        tk.Label(main, text="Configure API connection for first launch", bg=self.SETUP_BG,
+        subtitle = ("Change the API connection (e.g. connect to Azure)"
+                    if self.current_url else "Configure API connection for first launch")
+        tk.Label(main, text=subtitle, bg=self.SETUP_BG,
                 fg=self.SETUP_TEXT2, font=("Arial", 10)).pack(anchor=tk.W, pady=(0, 30))
 
         # API URL field
@@ -233,7 +305,7 @@ class SetupWindow:
                                      relief=tk.FLAT, bd=0, highlightthickness=2,
                                      highlightbackground=self.SETUP_BORDER,
                                      highlightcolor=self.SETUP_RED)
-        self.api_url_entry.insert(0, "http://localhost:8000")
+        self.api_url_entry.insert(0, self.current_url or "http://localhost:8000")
         self.api_url_entry.pack(fill=tk.X, ipady=10)
 
         # Example label
@@ -320,6 +392,96 @@ class SetupWindow:
         self.window.mainloop()
         return self.result
 
+# ==================== API CHOICE WINDOW (shown every launch) ====================
+class ApiChoiceWindow:
+    """Shown on every startup once an API URL is already saved. Lets the user
+    keep the current backend or switch to a different one (e.g. Azure)."""
+    BG = "#FFFFFF"
+    PANEL = "#F5F5F5"
+    BORDER = "#E0E0E0"
+    TEXT = "#1A1A1A"
+    TEXT2 = "#666666"
+    RED = "#AF151D"
+
+    def __init__(self, current_url: str):
+        self.current_url = current_url
+        self.result = None  # "keep" | "change" | "exit"
+        self.window = tk.Tk()
+        self.window.title("Bellmounth — Select Connection")
+        self.window.geometry("560x430")
+        self.window.configure(bg=self.BG)
+        self.window.resizable(False, False)
+        self._build_ui()
+        self.window.protocol("WM_DELETE_WINDOW", self._on_exit)
+        self.window.transient()
+        self.window.grab_set()
+
+    def _describe(self, url):
+        u = (url or "").lower()
+        if "azurewebsites.net" in u or "azure" in u:
+            return "☁  Azure cloud backend"
+        if "localhost" in u or "127.0.0.1" in u:
+            return "\U0001F5A5  Local backend (this PC)"
+        return "\U0001F310  Remote backend"
+
+    def _build_ui(self):
+        main = tk.Frame(self.window, bg=self.BG)
+        main.pack(fill=tk.BOTH, expand=True, padx=40, pady=40)
+
+        tk.Label(main, text="SELECT API CONNECTION", bg=self.BG, fg=self.TEXT,
+                 font=("Arial", 18, "bold")).pack(anchor=tk.W, pady=(0, 8))
+        tk.Label(main, text="Choose which backend this machine connects to.",
+                 bg=self.BG, fg=self.TEXT2, font=("Arial", 10)).pack(anchor=tk.W, pady=(0, 24))
+
+        # Current API card
+        card = tk.Frame(main, bg=self.PANEL, highlightthickness=1,
+                        highlightbackground=self.BORDER)
+        card.pack(fill=tk.X, pady=(0, 26))
+        tk.Label(card, text="CURRENT API", bg=self.PANEL, fg=self.TEXT2,
+                 font=("Arial", 8, "bold")).pack(anchor=tk.W, padx=16, pady=(14, 2))
+        tk.Label(card, text=self.current_url, bg=self.PANEL, fg=self.TEXT,
+                 font=("Consolas", 11, "bold"), wraplength=460,
+                 justify=tk.LEFT).pack(anchor=tk.W, padx=16, pady=(0, 4))
+        tk.Label(card, text=self._describe(self.current_url), bg=self.PANEL,
+                 fg=self.TEXT2, font=("Arial", 9)).pack(anchor=tk.W, padx=16, pady=(0, 14))
+
+        # Keep (primary)
+        keep_btn = tk.Button(main, text="✓  KEEP THIS API", command=self._on_keep,
+                             bg=self.RED, fg="#FFFFFF", font=("Arial", 12, "bold"),
+                             relief=tk.FLAT, bd=0, padx=16, pady=12, cursor="hand2")
+        keep_btn.pack(fill=tk.X, pady=(0, 12))
+        add_hover_effect(keep_btn, self.RED, "#8B0F15", "#FFFFFF")
+
+        # Change (secondary)
+        change_btn = tk.Button(main, text="⚙  CHANGE API  (connect to Azure / other)",
+                               command=self._on_change,
+                               bg=self.PANEL, fg=self.TEXT, font=("Arial", 12, "bold"),
+                               relief=tk.FLAT, bd=0, padx=16, pady=12, cursor="hand2")
+        change_btn.pack(fill=tk.X, pady=(0, 12))
+        add_hover_effect(change_btn, self.PANEL, "#E8E8E8", self.TEXT)
+
+        # Exit
+        exit_btn = tk.Button(main, text="EXIT", command=self._on_exit,
+                             bg=self.BG, fg=self.TEXT2, font=("Arial", 10),
+                             relief=tk.FLAT, bd=0, padx=8, pady=6, cursor="hand2")
+        exit_btn.pack()
+
+    def _on_keep(self):
+        self.result = "keep"
+        self.window.destroy()
+
+    def _on_change(self):
+        self.result = "change"
+        self.window.destroy()
+
+    def _on_exit(self):
+        self.result = "exit"
+        self.window.destroy()
+
+    def show(self):
+        self.window.mainloop()
+        return self.result
+
 # ==================== LOGIN WINDOW ====================
 class LoginWindow:
     # Light theme colors for login
@@ -362,7 +524,7 @@ class LoginWindow:
         logo_frame.pack(fill=tk.X, pady=(0, 30))
 
         # Load and display logo image
-        logo_path = Path(__file__).parent / "logo.png"
+        logo_path = APP_DIR / "logo.png"
         if logo_path.exists():
             try:
                 logo_img = Image.open(str(logo_path))
@@ -489,10 +651,10 @@ class MainApp:
         self.api_client = api_client
         self.selected_switch = None
 
+        # Detect the Bellmounth (Dino-Lite) camera. If it isn't connected the
+        # app still runs fully — a warning banner shows at the top instead of
+        # blocking the whole panel.
         self._init_sdk()
-        if not self.camera_ok:
-            self._show_no_camera()
-            return
 
         self.current_frame = None
         self.frozen = False  # True after a capture: the displayed frame is held still
@@ -512,6 +674,7 @@ class MainApp:
         self.annotation_count = self._count_annotations()
         self._tf_model = None
         self._loop_running = True
+        self._loop_alive = False  # True while a _start_loop chain is scheduled
         self.cable_status = "No cable"
         self.measurement_started = False
         self.cable_state = "no cable detected"
@@ -529,6 +692,9 @@ class MainApp:
         self.camera_ok = False
         self.cap = None
         self.pixel_measure = None
+        # Safe defaults so the rest of the app works even with no camera.
+        self.camera_width = 1920
+        self.camera_height = 1080
 
         try:
             self.cap = get_camera()
@@ -549,7 +715,7 @@ class MainApp:
         frame.pack(fill=tk.BOTH, expand=True)
 
         tk.Label(frame, text="✕", font=("Arial", 72, "bold"), fg=RED, bg=BG).pack(pady=20)
-        tk.Label(frame, text="NO CAMERA DETECTED", font=("Arial", 18, "bold"),
+        tk.Label(frame, text="STATE: NO BELLMOUNTH CAMERA DETECTED", font=("Arial", 18, "bold"),
                 fg=TEXT, bg=BG).pack(pady=6)
         tk.Label(frame, text="Connect a Dino-Lite microscope and press Retry.",
                 font=("Arial", 11), fg=TEXT2, bg=BG).pack(pady=6)
@@ -792,7 +958,14 @@ class MainApp:
         left_frame = tk.Frame(content_frame, bg=BG)
         left_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
 
-        # Camera canvas
+        # Camera canvas. This is a brand-new canvas each time the page is shown,
+        # so drop any image-item id / cached size from the previous (destroyed)
+        # canvas — otherwise _update_display would try to itemconfig an id that
+        # doesn't exist on this canvas (a silent no-op in Tk) and the feed would
+        # stay black. This is what caused the "black camera after switching
+        # sections" bug.
+        self._canvas_img_id = None
+        self.cached_canvas_size = None
         self.canvas = tk.Canvas(left_frame, bg="#000000", highlightthickness=0, highlightbackground=BORDER)
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self.canvas.bind("<MouseWheel>", self._on_scroll)
@@ -1003,8 +1176,10 @@ class MainApp:
         upload_btn.pack(fill=tk.X)
         add_hover_effect(upload_btn, GREEN, "#45A049", "#FFFFFF")
 
-        # Trigger initial display
+        # Trigger initial display and make sure the live camera loop is running
+        # (it may have stopped while another page was open).
         self._update_display()
+        self._ensure_loop()
 
     def _show_notifications_page(self):
         """Display notifications page with model update buttons"""
@@ -1411,8 +1586,17 @@ class MainApp:
         top.pack(fill=tk.X, side=tk.TOP)
         top.pack_propagate(False)
 
+        # Warning banner across the top when the Bellmounth (Dino-Lite) camera
+        # isn't connected. The app stays fully usable — this is just a notice.
+        if not self.camera_ok:
+            banner = tk.Frame(self.root, bg=RED)
+            banner.pack(fill=tk.X, side=tk.TOP)
+            tk.Label(banner, text="⚠  NO BELLMOUNTH CAMERA DETECTED",
+                     bg=RED, fg="#FFFFFF", font=("Arial", 10, "bold"),
+                     pady=6).pack()
+
         # Load and display logo in header
-        logo_path = Path(__file__).parent / "logo.png"
+        logo_path = APP_DIR / "logo.png"
         if logo_path.exists():
             try:
                 logo_img = Image.open(str(logo_path))
@@ -1467,8 +1651,16 @@ class MainApp:
                  bg=RED, fg=TEXT, font=("Arial", 9, "bold"),
                  relief=tk.FLAT, bd=0, padx=18, activebackground=RED,
                  activeforeground=TEXT)
-        quit_btn.pack(side=tk.LEFT, padx=20, pady=12)
+        quit_btn.pack(side=tk.LEFT, padx=(20, 4), pady=12)
         add_hover_effect(quit_btn, RED, RED, TEXT)
+
+        uninstall_btn = tk.Button(top, text="UNINSTALL",
+                 command=lambda: uninstall_app(self.root),
+                 bg=SEP, fg=TEXT2, font=("Arial", 9, "bold"),
+                 relief=tk.FLAT, bd=0, padx=12, activebackground=SEP,
+                 activeforeground=TEXT)
+        uninstall_btn.pack(side=tk.LEFT, padx=(0, 20), pady=12)
+        add_hover_effect(uninstall_btn, SEP, "#D3D3D3", TEXT)
 
         # Navigation bar
         navbar = tk.Frame(self.root, bg=PANEL, height=45)
@@ -1905,8 +2097,41 @@ class MainApp:
         """Update cable state display (no cable detected / cable male placed / cable good placed)"""
         self.cable_state = state
 
+    def _render_message(self, text, color=(60, 60, 255)):
+        """Paint a centered message on the camera canvas (used when there is no
+        live video, e.g. the Bellmounth microscope isn't connected)."""
+        if not hasattr(self, 'canvas'):
+            return
+        try:
+            cw = self.canvas.winfo_width()
+            ch = self.canvas.winfo_height()
+        except Exception:
+            return
+        if cw <= 1 or ch <= 1:
+            cw, ch = 640, 480
+        disp = np.zeros((ch, cw, 3), dtype=np.uint8)
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+        x = max(10, (cw - tw) // 2)
+        y = (ch + th) // 2
+        cv2.putText(disp, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+        rgb = cv2.cvtColor(disp, cv2.COLOR_BGR2RGB)
+        imgtk = ImageTk.PhotoImage(Image.fromarray(rgb))
+        if getattr(self, '_canvas_img_id', None) is None:
+            self._canvas_img_id = self.canvas.create_image(0, 0, anchor='nw', image=imgtk)
+        else:
+            try:
+                self.canvas.itemconfig(self._canvas_img_id, image=imgtk)
+            except Exception:
+                self._canvas_img_id = self.canvas.create_image(0, 0, anchor='nw', image=imgtk)
+        self.canvas.image = imgtk
+
     def _update_display(self):
-        if self.current_frame is None or not hasattr(self, 'canvas'):
+        if not hasattr(self, 'canvas'):
+            return
+        if self.current_frame is None:
+            # No live frame — the Bellmounth (Dino-Lite) microscope isn't sending
+            # video. Show it on the feed instead of a blank black canvas.
+            self._render_message("STATE: NO BELLMOUNTH CAMERA DETECTED")
             return
 
         # While frozen, always render the captured snapshot (so zoom/pan still
@@ -1987,12 +2212,6 @@ class MainApp:
                 cv2.putText(disp, txt, (mid[0], mid[1]),
                            cv2.FONT_HERSHEY_SIMPLEX, text_size, (0, 0, 255), int(line_thickness))
 
-        # Draw state indicator in top left corner
-        state_text = f"STATE: {self.cable_state.upper()}"
-        state_font_size = 0.7
-        cv2.rectangle(disp, (10, 10), (350, 45), (0, 0, 0), -1)  # Black background
-        cv2.putText(disp, state_text, (15, 35), cv2.FONT_HERSHEY_SIMPLEX,
-                   state_font_size, (0, 191, 255), 2)  # Cyan text
 
         # Display on canvas - only resize if needed
         try:
@@ -2014,8 +2233,20 @@ class MainApp:
         rgb = cv2.cvtColor(disp, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(rgb)
         imgtk = ImageTk.PhotoImage(img)
-        self.canvas.create_image(0, 0, anchor='nw', image=imgtk)
-        self.canvas.image = imgtk
+        # Reuse a single canvas image item instead of creating a new one every
+        # frame. create_image() never removes the previous item, so at ~10 FPS
+        # the canvas accumulated thousands of stale image objects — a steady
+        # memory + rendering slowdown the longer the app ran. Create once, then
+        # just swap the bitmap.
+        if getattr(self, '_canvas_img_id', None) is None:
+            self._canvas_img_id = self.canvas.create_image(0, 0, anchor='nw', image=imgtk)
+        else:
+            try:
+                self.canvas.itemconfig(self._canvas_img_id, image=imgtk)
+            except Exception:
+                # Canvas item was lost (e.g. canvas rebuilt) — recreate it.
+                self._canvas_img_id = self.canvas.create_image(0, 0, anchor='nw', image=imgtk)
+        self.canvas.image = imgtk  # keep a reference so the PhotoImage isn't GC'd
 
         # Update labels
         try:
@@ -2040,40 +2271,62 @@ class MainApp:
         except:
             pass
 
+    def _ensure_loop(self):
+        """Start the camera loop if it isn't already running. Called when the
+        measure page is shown so the live feed always resumes — even if the
+        loop had stopped while another page (reclamations, notifications…) was
+        open."""
+        if self._loop_running and self.camera_ok and not getattr(self, "_loop_alive", False):
+            self._loop_alive = True
+            self.root.after(0, self._start_loop)
+
     def _start_loop(self):
         if not self._loop_running or not self.camera_ok:
+            self._loop_alive = False
             return
 
-        ret, frame = self.cap.read()
-        if ret:
-            # Reduce frame size for faster processing (but keep original for calculations)
-            if frame.shape[1] > 1280:
-                frame = cv2.resize(frame, (1280, int(frame.shape[0] * 1280 / frame.shape[1])))
-            self.current_frame = frame
+        self._loop_alive = True
+        # The measure widgets (canvas, zoom_val, mpp_val) only exist while the
+        # measure page is open. When another page is showing they are gone, so
+        # skip all frame work — but keep the loop scheduled so returning to the
+        # measure page shows a live feed again. Everything is wrapped so a
+        # transient error can never kill the reschedule (the old cause of the
+        # "black camera after leaving reclamations" bug).
+        try:
+            on_measure_page = (hasattr(self, "canvas")
+                               and self.canvas.winfo_exists())
+            if on_measure_page:
+                ret, frame = self.cap.read()
+                if ret:
+                    # Reduce frame size for faster processing (keep original for calc)
+                    if frame.shape[1] > 1280:
+                        frame = cv2.resize(frame, (1280, int(frame.shape[0] * 1280 / frame.shape[1])))
+                    self.current_frame = frame
 
-            # Only update display every 2 frames (10 FPS display, but 20 FPS camera reads).
-            # While frozen (after a capture) we keep grabbing frames but hold the
-            # displayed image still so the detected points stay on screen.
-            if self.frame_count % 2 == 0 and not self.frozen:
-                self._update_display()
+                    # Update display every 2 frames. While frozen (after a
+                    # capture) hold the displayed image still.
+                    if self.frame_count % 2 == 0 and not self.frozen:
+                        self._update_display()
 
-            # Skip SDK calls if zoom is changing (avoid freeze during zoom)
-            zoom_changed = abs(self.zoom - self.last_zoom) > 0.01
-            self.last_zoom = self.zoom
+                    # Skip SDK calls if zoom is changing (avoid freeze during zoom)
+                    zoom_changed = abs(self.zoom - self.last_zoom) > 0.01
+                    self.last_zoom = self.zoom
 
-            # Update SDK values only every 10 frames AND only if zoom is stable
-            if self.frame_count % 10 == 0 and not zoom_changed:
-                try:
-                    self.pixel_measure.update()
-                    zoom, mpp = self.pixel_measure.get_values()
-                    if zoom:
-                        self.zoom_val.config(text=f"{zoom:.2f}x")
-                    if mpp:
-                        self.mpp_val.config(text=f"{mpp:.5f}")
-                except:
-                    pass
+                    # Update SDK values every 10 frames if zoom is stable
+                    if self.frame_count % 10 == 0 and not zoom_changed:
+                        try:
+                            self.pixel_measure.update()
+                            zoom, mpp = self.pixel_measure.get_values()
+                            if zoom and hasattr(self, "zoom_val"):
+                                self.zoom_val.config(text=f"{zoom:.2f}x")
+                            if mpp and hasattr(self, "mpp_val"):
+                                self.mpp_val.config(text=f"{mpp:.5f}")
+                        except:
+                            pass
 
-            self.frame_count += 1
+                    self.frame_count += 1
+        except Exception as e:
+            print(f"Camera loop iteration error: {e}")
 
         # Health check every 30 seconds
         current_time = time.time()
@@ -2082,6 +2335,7 @@ class MainApp:
             try:
                 result = self.api_client.health_check()
                 if not self._check_api_response(result):
+                    self._loop_alive = False
                     return
                 if not result.get("ok"):
                     error_type = result.get("error_type", "unknown")
@@ -2119,7 +2373,7 @@ class MainApp:
 
 # ==================== ADMIN CACHE ====================
 class AdminCache:
-    CACHE_FILE = Path(__file__).parent / "admin_cache.json"
+    CACHE_FILE = APP_DIR / "admin_cache.json"
     KEYS = ["users", "machines", "switches", "captures"]
 
     def __init__(self):
@@ -2215,7 +2469,7 @@ class AdminApp:
         top.pack_propagate(False)
 
         # Logo
-        logo_path = Path(__file__).parent / "logo.png"
+        logo_path = APP_DIR / "logo.png"
         if logo_path.exists():
             try:
                 logo_img = Image.open(str(logo_path))
@@ -2246,6 +2500,9 @@ class AdminApp:
         quit_btn = tk.Button(top, text="QUIT", command=self._on_closing, bg=RED, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=6)
         quit_btn.pack(side=tk.LEFT, padx=10)
         add_hover_effect(quit_btn, RED, RED, "#FFFFFF")
+        uninstall_btn = tk.Button(top, text="UNINSTALL", command=lambda: uninstall_app(self.root), bg=SEP, fg=TEXT2, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=12, pady=6)
+        uninstall_btn.pack(side=tk.LEFT, padx=(0, 10))
+        add_hover_effect(uninstall_btn, SEP, "#D3D3D3", TEXT)
 
         # Navbar
         navbar = tk.Frame(self.root, bg=PANEL, height=45)
@@ -3813,7 +4070,7 @@ class AdminApp:
         tk.Label(frame, text="⚙ Settings", bg=BG, fg=TEXT, font=("Arial", 14, "bold")).pack(anchor=tk.W, pady=(0, 20))
 
         # Load current config
-        config_file = Path(__file__).parent / "config.json"
+        config_file = APP_DIR / "config.json"
         config = {}
         if config_file.exists():
             try:
@@ -3842,7 +4099,7 @@ class AdminApp:
             file_path = filedialog.askopenfilename(
                 title="Select Google Credentials JSON",
                 filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-                initialdir=str(Path(__file__).parent)
+                initialdir=str(APP_DIR)
             )
             if file_path:
                 creds_entry.delete(0, tk.END)
@@ -3909,7 +4166,7 @@ class AdminApp:
                     return
 
             # Save config
-            config_file = Path(__file__).parent / "config.json"
+            config_file = APP_DIR / "config.json"
             config = {
                 "google_drive": {
                     "credentials_path": creds_path,
@@ -5597,7 +5854,7 @@ To enable notifications:
             # Check for Google Drive credentials if using Google Drive
             if method == "google_drive":
                 # Get credentials path from config first
-                config_file = Path(__file__).parent / "config.json"
+                config_file = APP_DIR / "config.json"
                 creds_path = None
 
                 if config_file.exists():
@@ -5609,7 +5866,7 @@ To enable notifications:
 
                 # If no config path, use default
                 if not creds_path:
-                    creds_path = str(Path(__file__).parent / "google_credentials.json")
+                    creds_path = str(APP_DIR / "google_credentials.json")
 
                 creds_file = Path(creds_path)
                 if not creds_file.exists():
@@ -5678,7 +5935,7 @@ To enable notifications:
                     from google_drive_client import GoogleDriveClient
 
                     # Get credentials path from config
-                    config_file = Path(__file__).parent / "config.json"
+                    config_file = APP_DIR / "config.json"
                     creds_path = None
                     if config_file.exists():
                         try:
@@ -5688,7 +5945,7 @@ To enable notifications:
                             pass
 
                     if not creds_path:
-                        creds_path = str(Path(__file__).parent / "google_credentials.json")
+                        creds_path = str(APP_DIR / "google_credentials.json")
 
                     drive_client = GoogleDriveClient(creds_path)
 
@@ -5939,7 +6196,7 @@ Error sending auto-notifications: {str(e)}"""
 
     def _open_model_training(self):
         try:
-            model_app_path = Path(__file__).parent / "model_bellmounth_mesure" / "model_app.py"
+            model_app_path = APP_DIR / "model_bellmounth_mesure" / "model_app.py"
             if model_app_path.exists():
                 import subprocess
                 subprocess.Popen([sys.executable, str(model_app_path)])
@@ -5992,6 +6249,9 @@ class AnnoteurApp:
         quit_btn = tk.Button(top, text="LOGOUT", command=self._on_closing, bg=RED, fg="#FFFFFF", font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=16, pady=6)
         quit_btn.pack(side=tk.LEFT, padx=10)
         add_hover_effect(quit_btn, RED, RED, "#FFFFFF")
+        uninstall_btn = tk.Button(top, text="UNINSTALL", command=lambda: uninstall_app(self.root), bg=SEP, fg=TEXT2, font=("Arial", 10, "bold"), relief=tk.FLAT, bd=0, padx=12, pady=6)
+        uninstall_btn.pack(side=tk.LEFT, padx=(0, 10))
+        add_hover_effect(uninstall_btn, SEP, "#D3D3D3", TEXT)
 
         # Main content
         main_content = tk.Frame(self.root, bg=BG)
@@ -6776,6 +7036,9 @@ class AnnoteurInteractiveApp:
         quit_btn = tk.Button(top, text="LOGOUT", command=self._on_closing, bg=RED, fg="#FFFFFF", font=("Arial", 9, "bold"), relief=tk.FLAT, bd=0, padx=12, pady=4)
         quit_btn.pack(side=tk.LEFT, padx=10)
         add_hover_effect(quit_btn, RED, RED, "#FFFFFF")
+        uninstall_btn = tk.Button(top, text="UNINSTALL", command=lambda: uninstall_app(self.root), bg=SEP, fg=TEXT2, font=("Arial", 9, "bold"), relief=tk.FLAT, bd=0, padx=10, pady=4)
+        uninstall_btn.pack(side=tk.LEFT, padx=(0, 10))
+        add_hover_effect(uninstall_btn, SEP, "#D3D3D3", TEXT)
 
         # Navigation bar
         navbar = tk.Frame(self.root, bg=BORDER, height=50)
@@ -7370,22 +7633,14 @@ class AnnoteurInteractiveApp:
 
 # ==================== MAIN ====================
 if __name__ == "__main__":
-    # Check if API URL is configured
-    api_url = None
-    if CONFIG_FILE.exists():
-        try:
-            config = json.loads(CONFIG_FILE.read_text())
-            api_url = config.get("api_url")
-        except:
-            pass
-
-    # If no API URL configured, show setup window
+    # Server configuration screen first: API URL + Azure SQL/blob/JWT values,
+    # prefilled from .env / config.json, with test buttons. Saving writes both
+    # files, then the app continues to the login screen.
+    from server_config import show_server_config
+    api_url = show_server_config()
     if not api_url:
-        setup = SetupWindow()
-        api_url = setup.show()
-        if not api_url:
-            print("Setup cancelled. Exiting.")
-            sys.exit(0)
+        print("Setup cancelled. Exiting.")
+        sys.exit(0)
 
     # Create API client and check connection before showing login
     api_client = APIClient(api_url)

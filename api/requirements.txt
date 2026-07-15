@@ -1,9 +1,28 @@
-fastapi
-uvicorn
-sqlalchemy
-python-dotenv
-pydantic
-bcrypt
-PyJWT
-python-multipart
-requests
+# Backend API dependencies (for Azure App Service / local API server).
+# Deliberately does NOT include tensorflow/opencv/pillow — those belong to the
+# desktop app, not the API, and would add ~2 GB to the deployment.
+
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+gunicorn>=21.2.0
+sqlalchemy>=2.0.0
+pydantic>=2.0.0
+python-multipart>=0.0.6
+PyJWT>=2.8.0
+bcrypt>=4.1.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+
+# Image storage in the cloud (Azure Blob). Safe to install locally too; the code
+# only imports it when BLOB_CONNECTION_STRING is set.
+azure-storage-blob>=12.19.0
+
+# Database driver. Default = PostgreSQL (recommended: pure-pip, no system deps).
+psycopg2-binary>=2.9.9
+
+# Azure SQL Server driver (pure-pip, no ODBC needed). Used via
+# DATABASE_URL=mssql+pymssql://user:pass@server:1433/db
+pymssql>=2.3.0
+
+# pyodbc alternative (requires the Microsoft ODBC Driver 18 installed on the host):
+# pyodbc>=5.0.0

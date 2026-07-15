@@ -21,65 +21,71 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# Middleware to check if user/machine is still active on each request
+# Endpoints reachable WITHOUT a login token. Everything else is protected.
+PUBLIC_PATHS = {
+    "/",
+    "/auth/login",
+    "/auth/health",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/favicon.ico",
+}
+
+
 @app.middleware("http")
-async def check_active_status_middleware(request: Request, call_next):
-    """Check if authenticated user/machine is still active"""
-    # Skip auth check for login and health endpoints
-    if request.url.path in ["/auth/login", "/auth/health", "/"]:
+async def auth_middleware(request: Request, call_next):
+    """Require a valid login token on every non-public endpoint.
+
+    This is the door lock for the whole API: without it, anyone who knows the
+    server URL could read or modify data without logging in. Public paths (login,
+    health, docs) are exempt; CORS preflight (OPTIONS) is always allowed.
+    """
+    path = request.url.path
+    if request.method == "OPTIONS" or path in PUBLIC_PATHS:
         return await call_next(request)
 
-    # Get token from Authorization header
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
-        # No token, let the endpoint handle it
-        return await call_next(request)
+        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
 
-    token = auth_header.replace("Bearer ", "").strip()
+    token = auth_header[len("Bearer "):].strip()
 
-    # Verify token and check active status
+    from auth import JWT_SECRET, JWT_ALGORITHM
     try:
-        from auth import JWT_SECRET, JWT_ALGORITHM
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        user_id = payload.get("sub")
-
-        if user_id:
-            # Get database session
-            db = next(get_db())
-            try:
-                # Check if it's a user
-                user = db.query(User).filter(User.id == user_id).first()
-                if user and not user.is_active:
-                    return JSONResponse(
-                        status_code=403,
-                        content={"detail": "Your account is deactivated"}
-                    )
-
-                # Check if it's a machine
-                machine = db.query(Machine).filter(Machine.id == user_id).first()
-                if machine and not machine.is_active:
-                    return JSONResponse(
-                        status_code=403,
-                        content={"detail": "Your account is deactivated"}
-                    )
-            finally:
-                db.close()
     except jwt.ExpiredSignatureError:
-        pass
+        return JSONResponse(status_code=401, content={"detail": "Session expired, please log in again"})
     except jwt.InvalidTokenError:
-        pass
-    except Exception:
-        pass
+        return JSONResponse(status_code=401, content={"detail": "Invalid authentication token"})
+
+    # Reject tokens whose account has since been deactivated.
+    user_id = payload.get("sub")
+    if user_id:
+        db = next(get_db())
+        try:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user and not user.is_active:
+                return JSONResponse(status_code=403, content={"detail": "Your account is deactivated"})
+            machine = db.query(Machine).filter(Machine.id == user_id).first()
+            if machine and not machine.is_active:
+                return JSONResponse(status_code=403, content={"detail": "Your account is deactivated"})
+        finally:
+            db.close()
 
     return await call_next(request)
 
-# CORS configuration
-origins = [
+# CORS configuration. Desktop clients aren't subject to CORS, but a web frontend
+# would be — so allow overriding the allowed origins via the CORS_ORIGINS env var
+# (comma-separated). Defaults to localhost for development.
+_default_origins = [
     "http://localhost",
     "http://localhost:8000",
     "http://127.0.0.1",
     "http://127.0.0.1:8000",
 ]
+_env_origins = os.getenv("CORS_ORIGINS", "")
+origins = [o.strip() for o in _env_origins.split(",") if o.strip()] or _default_origins
 
 app.add_middleware(
     CORSMiddleware,
@@ -163,7 +169,7 @@ def submit_machine_report(data: dict, db: Session = Depends(get_db)):
     """Submit an issue report from a machine panel. Creates a notification
     visible to admins in the notification section."""
     try:
-        from models import Machine
+        from models import User, UserRole
         import uuid
 
         machine_name = data.get("machine_name", "Unknown machine")
@@ -174,22 +180,26 @@ def submit_machine_report(data: dict, db: Session = Depends(get_db)):
         if not title or not description:
             return {"ok": False, "error": "Title and description are required"}
 
-        # Resolve the machine so the notification is attributed to it.
-        machine = db.query(Machine).filter(Machine.machine_name == machine_name).first()
+        # The report goes TO the admins. notifications.user_id is a foreign key
+        # to users.id (the recipient) — a machine id is NOT a valid user id, so
+        # create one notification per admin, with the machine named in the body.
+        admins = db.query(User).filter(User.role == UserRole.admin).all()
+        if not admins:
+            return {"ok": False, "error": "No admin to notify"}
 
-        notification = Notification(
-            id=str(uuid.uuid4()),
-            user_id=machine.id if machine else None,
-            notification_type="reclamation",
-            title=f"🛠 Report ({machine_name}): {title}",
-            body=f"""Machine: {machine_name}
+        for admin in admins:
+            db.add(Notification(
+                id=str(uuid.uuid4()),
+                user_id=admin.id,
+                notification_type="reclamation",
+                title=f"🛠 Report ({machine_name}): {title}",
+                body=f"""Machine: {machine_name}
 Category: {category}
 Subject: {title}
 
 {description}""",
-            read=False,
-        )
-        db.add(notification)
+                read=False,
+            ))
         db.commit()
         return {"ok": True, "message": "Report submitted"}
     except Exception as e:

@@ -1,20 +1,19 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime
-import os
 import uuid
+import threading
 from database import get_db
 from models import Capture, User, UserRole, Switch
 from schemas import CaptureResponse, CaptureUploadRequest
+from storage import save_image, read_image, delete_image, ensure_dirs
 
 router = APIRouter(prefix="/captures", tags=["captures"])
 
-CAPTURES_DIR = os.getenv("CAPTURES_DIR", "./captures")
-os.makedirs(CAPTURES_DIR, exist_ok=True)
-os.makedirs(f"{CAPTURES_DIR}/original", exist_ok=True)
-os.makedirs(f"{CAPTURES_DIR}/thresholded", exist_ok=True)
+# Local mode: make sure the capture folders exist. No-op when using Azure Blob.
+ensure_dirs()
 
 
 def _pick_least_busy_annoteur(db: Session):
@@ -71,15 +70,10 @@ def upload_capture(
         original_filename = f"capture_{timestamp}_{unique_id}_original.png"
         thresholded_filename = f"capture_{timestamp}_{unique_id}_thresholded.png"
 
-        original_path = f"{CAPTURES_DIR}/original/{original_filename}"
-        thresholded_path = f"{CAPTURES_DIR}/thresholded/{thresholded_filename}"
-
-        # Save files
-        with open(original_path, "wb") as f:
-            f.write(image_original.file.read())
-
-        with open(thresholded_path, "wb") as f:
-            f.write(image_thresholded.file.read())
+        # Save images via the storage layer (Azure Blob in the cloud, local disk
+        # otherwise). It returns the key/path to persist on the capture row.
+        original_path = save_image("original", original_filename, image_original.file.read())
+        thresholded_path = save_image("thresholded", thresholded_filename, image_thresholded.file.read())
 
         # Fair auto-assignment: give this capture to the active annoteur who
         # currently has the fewest captures still waiting to be verified. This
@@ -128,11 +122,12 @@ def get_capture_image(capture_id: str, kind: str = "original", db: Session = Dep
     if not capture:
         raise HTTPException(status_code=404, detail="Capture not found")
 
-    path = capture.image_thresholded_path if kind == "thresholded" else capture.image_original_path
-    if not path or not os.path.exists(path):
+    key = capture.image_thresholded_path if kind == "thresholded" else capture.image_original_path
+    data = read_image(key)
+    if data is None:
         raise HTTPException(status_code=404, detail=f"{kind} image file not found on server")
 
-    return FileResponse(path, media_type="image/png")
+    return Response(content=data, media_type="image/png")
 
 @router.get("/queue", response_model=List[CaptureResponse])
 def get_capture_queue(annoteur_id: str, db: Session = Depends(get_db)):
@@ -160,41 +155,36 @@ def reject_capture(capture_id: str, reason: str = None, db: Session = Depends(ge
     if not capture:
         raise HTTPException(status_code=404, detail="Capture not found")
 
+    orig_key, thresh_key = capture.image_original_path, capture.image_thresholded_path
     db.delete(capture)
     db.commit()
+
+    # Clean up the stored images too (best-effort, non-blocking).
+    def _cleanup():
+        delete_image(orig_key)
+        delete_image(thresh_key)
+    threading.Thread(target=_cleanup, daemon=True).start()
 
     return {"status": "rejected", "capture_id": capture_id, "reason": reason}
 
 @router.delete("/{capture_id}")
 def delete_capture(capture_id: str, db: Session = Depends(get_db)):
-    import threading
-
     capture = db.query(Capture).filter(Capture.id == capture_id).first()
     if not capture:
         raise HTTPException(status_code=404, detail="Capture not found")
 
-    # Store file paths before deleting from DB
-    orig_path = capture.image_original_path
-    thresh_path = capture.image_thresholded_path
+    # Capture the storage keys before removing the row.
+    orig_key = capture.image_original_path
+    thresh_key = capture.image_thresholded_path
 
     # Delete from database immediately
     db.delete(capture)
     db.commit()
 
-    # Delete image files in background (don't block response)
-    def delete_files():
-        if os.path.exists(orig_path):
-            try:
-                os.remove(orig_path)
-            except:
-                pass
-        if os.path.exists(thresh_path):
-            try:
-                os.remove(thresh_path)
-            except:
-                pass
-
-    thread = threading.Thread(target=delete_files, daemon=True)
-    thread.start()
+    # Delete images (blob or local) in the background so we don't block response.
+    def _cleanup():
+        delete_image(orig_key)
+        delete_image(thresh_key)
+    threading.Thread(target=_cleanup, daemon=True).start()
 
     return {"ok": True, "message": "Capture deleted successfully", "capture_id": capture_id}

@@ -8,6 +8,12 @@ from typing import Optional, Dict, Any
 from pathlib import Path
 import socket
 
+# The Azure App Service and its serverless SQL database can take up to ~60s to
+# wake after being idle, so requests must survive a cold start instead of
+# reporting "server took too long to respond".
+REQUEST_TIMEOUT = 90
+UPLOAD_TIMEOUT = 180
+
 def check_internet_connection() -> bool:
     """Check if machine has actual internet connection by reaching a public server."""
     try:
@@ -79,7 +85,7 @@ class APIClient:
                 f"{self.api_url}/auth/login",
                 json={"username": username, "password": password},
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 data = response.json()
@@ -116,7 +122,7 @@ class APIClient:
     def health_check(self) -> Dict[str, Any]:
         """Check if API is running. Returns {"ok": bool, "error_type": str, "error": str}"""
         try:
-            response = requests.get(f"{self.api_url}/auth/health", headers=self._get_headers(), timeout=3)
+            response = requests.get(f"{self.api_url}/auth/health", headers=self._get_headers(), timeout=REQUEST_TIMEOUT)
             if response.status_code == 200:
                 return {"ok": True}
             else:
@@ -160,7 +166,7 @@ class APIClient:
                 url,
                 params=params,
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -200,7 +206,7 @@ class APIClient:
             response = requests.get(
                 f"{self.api_url}/switches/{switch_id}",
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return response.json()
@@ -265,7 +271,7 @@ class APIClient:
                     data=data,
                     files=files,
                     headers=upload_headers,
-                    timeout=15
+                    timeout=UPLOAD_TIMEOUT
                 )
 
                 if response.status_code == 200:
@@ -324,7 +330,7 @@ class APIClient:
                 f"{self.api_url}/captures/{capture_id}/image",
                 params={"kind": kind},
                 headers=headers,
-                timeout=15,
+                timeout=UPLOAD_TIMEOUT,
             )
             if response.status_code == 200:
                 return response.content
@@ -339,7 +345,7 @@ class APIClient:
                 f"{self.api_url}/captures/queue",
                 params={"annoteur_id": annoteur_id},
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return response.json()
@@ -354,7 +360,7 @@ class APIClient:
             response = requests.put(
                 f"{self.api_url}/captures/{capture_id}/approve",
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             return response.json()
         except Exception as e:
@@ -367,7 +373,7 @@ class APIClient:
                 f"{self.api_url}/captures/{capture_id}/reject",
                 params={"reason": reason},
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             return response.json()
         except Exception as e:
@@ -379,7 +385,7 @@ class APIClient:
             response = requests.delete(
                 f"{self.api_url}/captures/{capture_id}",
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             return response.json()
         except Exception as e:
@@ -397,7 +403,7 @@ class APIClient:
                 f"{self.api_url}/admin/users",
                 params=params,
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -419,7 +425,7 @@ class APIClient:
                 f"{self.api_url}/admin/users",
                 json=data,
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -441,7 +447,7 @@ class APIClient:
                 f"{self.api_url}/admin/users/{user_id}",
                 json=data,
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -461,7 +467,7 @@ class APIClient:
             response = requests.delete(
                 f"{self.api_url}/admin/users/{user_id}",
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -481,7 +487,7 @@ class APIClient:
             response = requests.get(
                 f"{self.api_url}/admin/machines",
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -503,7 +509,7 @@ class APIClient:
                 f"{self.api_url}/admin/machines",
                 json=data,
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -525,7 +531,7 @@ class APIClient:
                 f"{self.api_url}/admin/machines/{machine_id}",
                 json=data,
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -545,7 +551,7 @@ class APIClient:
             response = requests.delete(
                 f"{self.api_url}/admin/machines/{machine_id}",
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -569,7 +575,7 @@ class APIClient:
                 f"{self.api_url}/admin/switches",
                 params=params,
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -598,7 +604,7 @@ class APIClient:
                 f"{self.api_url}/admin/switches",
                 json=data,
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -620,7 +626,7 @@ class APIClient:
                 f"{self.api_url}/admin/switches/{switch_id}",
                 json=data,
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -640,7 +646,7 @@ class APIClient:
             response = requests.delete(
                 f"{self.api_url}/admin/switches/{switch_id}",
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -664,7 +670,7 @@ class APIClient:
                 f"{self.api_url}/admin/captures",
                 params=params,
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -686,7 +692,7 @@ class APIClient:
                 f"{self.api_url}/admin/captures/{capture_id}/assign",
                 json=data,
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -706,7 +712,7 @@ class APIClient:
             response = requests.put(
                 f"{self.api_url}/admin/captures/{capture_id}/approve",
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -726,7 +732,7 @@ class APIClient:
             response = requests.get(
                 f"{self.api_url}/notifications/",
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -746,7 +752,7 @@ class APIClient:
             response = requests.delete(
                 f"{self.api_url}/notifications/{notification_id}",
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True}
@@ -766,7 +772,7 @@ class APIClient:
                     "category": category,
                 },
                 headers=self._get_headers(),
-                timeout=10
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 result = response.json()
@@ -796,7 +802,7 @@ class APIClient:
                     "notification_type": notification_type
                 },
                 headers=self._get_headers(),
-                timeout=10
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return {"ok": True, "data": response.json()}
@@ -815,7 +821,7 @@ class APIClient:
                 url,
                 params=params,
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
             if response.status_code == 200:
                 return response.json()
@@ -838,7 +844,7 @@ class APIClient:
                 url,
                 json=data,
                 headers=self._get_headers(),
-                timeout=5
+                timeout=REQUEST_TIMEOUT
             )
         except Exception as e:
             raise RuntimeError(f"Could not reach server: {e}")

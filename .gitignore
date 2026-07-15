@@ -36,3 +36,20 @@ model_backups/
 # Stale DB backups and logs
 *.stale-bak
 *.log
+
+# Secrets — never commit
+.env
+.cloud_token.json
+
+# Build artifacts (PyInstaller + Inno Setup) — multi-GB, never commit
+build/
+dist/
+*.spec
+*.exe
+
+# Local SQLite dev database
+bellmounth.db
+*.db
+
+# Runtime cache (regenerated from the API each run)
+admin_cache.json
