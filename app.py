@@ -7598,18 +7598,22 @@ class AnnoteurInteractiveApp:
                 return
 
             try:
-                payload = {
-                    "subject": subject,
-                    "problem_type": problem_type,
-                    "description": problem,
-                    "user_id": self.user_id,
-                    "created_at": datetime.now().isoformat()
-                }
-                self.api_client.post("/admin/reclamations", payload)
-                messagebox.showinfo("Success", "Reclamation submitted successfully")
-                subject_entry.delete(0, tk.END)
-                problem_text.delete("1.0", tk.END)
-                problem_type_var.set("-- Select Problem Type --")
+                # Send the reclamation to the admins as a notification (same
+                # path the machine panel uses). The sender label is the
+                # annoteur's username so admins see who reported it.
+                result = self.api_client.submit_report(
+                    machine_name=self.username,
+                    title=subject,
+                    description=problem,
+                    category=problem_type,
+                )
+                if result.get("ok"):
+                    messagebox.showinfo("Success", "Reclamation submitted successfully")
+                    subject_entry.delete(0, tk.END)
+                    problem_text.delete("1.0", tk.END)
+                    problem_type_var.set("-- Select Problem Type --")
+                else:
+                    messagebox.showerror("Error", f"Failed to submit reclamation: {result.get('error', 'Unknown error')}")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to submit reclamation: {str(e)}")
 

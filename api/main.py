@@ -12,8 +12,22 @@ import jwt
 
 load_dotenv()
 
-# Initialize database
+# Initialize database: create tables, then seed default data if it's empty.
+# Doing this server-side means a fresh/empty database becomes usable without
+# the desktop app ever connecting to SQL directly.
 init_db()
+try:
+    from database import SessionLocal
+    from reset_db import seed_defaults
+    _seed_db = SessionLocal()
+    try:
+        if _seed_db.query(User).count() == 0:
+            seed_defaults(_seed_db)
+            print("Empty database detected on startup — seeded default data.")
+    finally:
+        _seed_db.close()
+except Exception as _seed_err:
+    print(f"Startup seed check skipped: {_seed_err}")
 
 app = FastAPI(
     title="Bellmounth API",
@@ -26,6 +40,7 @@ PUBLIC_PATHS = {
     "/",
     "/auth/login",
     "/auth/health",
+    "/health/db",
     "/docs",
     "/redoc",
     "/openapi.json",
@@ -100,6 +115,32 @@ app.include_router(auth.router)
 app.include_router(switches.router)
 app.include_router(captures.router)
 app.include_router(admin.router)
+
+
+@app.get("/health/db")
+def health_db(db: Session = Depends(get_db)):
+    """Public health check for the database and schema, verified server-side.
+
+    The desktop app calls this instead of connecting to Azure SQL directly, so
+    it works from any PC/network without SQL firewall changes. Reports whether
+    every expected table exists and how many users/tables are present.
+    """
+    from sqlalchemy import inspect
+    from database import Base, engine
+
+    expected = set(Base.metadata.tables.keys())
+    inspector = inspect(engine)
+    existing = set(inspector.get_table_names())
+    missing = sorted(expected - existing)
+
+    users = db.query(User).count() if not missing else 0
+    return {
+        "ok": len(missing) == 0,
+        "tables_expected": len(expected),
+        "tables_present": len(existing & expected),
+        "missing_tables": missing,
+        "users": users,
+    }
 
 # Notifications endpoint
 @app.get("/notifications/")

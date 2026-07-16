@@ -138,17 +138,20 @@ def _wait_for_sql(connect_fn, retries=12, delay=8):
 
 
 def test_database(values: dict) -> str:
-    import pymssql
-    conn = _wait_for_sql(lambda: pymssql.connect(
-        server=values["SQL_SERVER"], user=values["SQL_USER"],
-        password=values["SQL_PASSWORD"], database=values["SQL_DATABASE"],
-        port=1433, login_timeout=90,
-    ))
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM sys.tables")
-    tables = cur.fetchone()[0]
-    conn.close()
-    return f"Database OK — {tables} tables"
+    """Check the database THROUGH the API (server-side), so it works from any
+    PC/network without adding the client IP to the SQL firewall. The API lives
+    inside Azure and is always allowed to reach the database."""
+    import requests
+    url = values["API_URL"].rstrip("/")
+    if not url:
+        raise ValueError("API URL is empty")
+    r = requests.get(f"{url}/health/db", timeout=120)  # allow DB to wake
+    r.raise_for_status()
+    data = r.json()
+    if data.get("missing_tables"):
+        raise ValueError("database missing tables: "
+                         + ", ".join(data["missing_tables"]))
+    return f"Database OK — {data.get('tables_present', '?')} tables"
 
 
 def test_storage(values: dict) -> str:
@@ -162,72 +165,27 @@ def test_storage(values: dict) -> str:
 
 
 def test_schema(values: dict) -> str:
-    """Verify the database structure against the app's models.
+    """Verify the database structure THROUGH the API (server-side).
 
-    - Empty database        → create every table + relation, insert default data
-    - Complete schema       → use it as-is (seed defaults if it has no users)
-    - Anything in between   → 'incompatible database', login stays blocked
-    """
-    import sys
-    api_dir = str(ROOT / "api")
-    if api_dir not in sys.path:
-        sys.path.insert(0, api_dir)
-    from sqlalchemy import create_engine, inspect
-    from sqlalchemy.orm import sessionmaker
-    import database  # defines Base + the mssql String(450) compile rule
-    import models
-    from reset_db import seed_defaults
-
-    engine = create_engine(values["DATABASE_URL"], pool_pre_ping=True)
-    _wait_for_sql(lambda: engine.connect()).close()  # let a paused DB resume
-    expected = database.Base.metadata.tables
-    inspector = inspect(engine)
-    existing = set(inspector.get_table_names())
-
-    if not existing:
-        database.Base.metadata.create_all(bind=engine)
-        db = sessionmaker(bind=engine)()
-        try:
-            seed_defaults(db)
-        finally:
-            db.close()
-        return (f"Empty database — created {len(expected)} tables + relations "
-                "and default data (admin/admin123)")
-
-    problems = []
-    missing_tables = set(expected) - existing
-    if missing_tables:
-        problems.append("missing tables: " + ", ".join(sorted(missing_tables)))
-    for name, table in expected.items():
-        if name in missing_tables:
-            continue
-        db_columns = {c["name"] for c in inspector.get_columns(name)}
-        missing_columns = {c.name for c in table.columns} - db_columns
-        if missing_columns:
-            problems.append(f"table '{name}' missing columns: "
-                            + ", ".join(sorted(missing_columns)))
-        expected_fks = {(fk.parent.name, fk.column.table.name)
-                        for fk in table.foreign_keys}
-        db_fks = set()
-        for fk in inspector.get_foreign_keys(name):
-            for col in fk["constrained_columns"]:
-                db_fks.add((col, fk["referred_table"]))
-        missing_fks = expected_fks - db_fks
-        if missing_fks:
-            problems.append(f"table '{name}' missing relations: "
-                            + ", ".join(f"{c}→{t}" for c, t in sorted(missing_fks)))
-    if problems:
-        raise ValueError("Incompatible database — " + "; ".join(problems))
-
-    db = sessionmaker(bind=engine)()
-    try:
-        if db.query(models.User).count() == 0:
-            seed_defaults(db)
-            return (f"Schema OK ({len(expected)} tables) — no users found, "
-                    "default data added (admin/admin123)")
-    finally:
-        db.close()
-    return f"Schema OK — {len(expected)} tables, all relations verified"
+    The API creates the tables and seeds default data on startup when the
+    database is empty, so by the time this check runs a healthy database
+    already has its schema. This routes through the API (always allowed inside
+    Azure) instead of connecting to SQL directly, so no firewall changes are
+    ever needed on client PCs."""
+    import requests
+    url = values["API_URL"].rstrip("/")
+    if not url:
+        raise ValueError("API URL is empty")
+    r = requests.get(f"{url}/health/db", timeout=120)
+    r.raise_for_status()
+    data = r.json()
+    if data.get("missing_tables"):
+        raise ValueError("Incompatible database — missing tables: "
+                         + ", ".join(data["missing_tables"]))
+    if not data.get("ok"):
+        raise ValueError("Database schema check failed")
+    return (f"Schema OK — {data.get('tables_present', '?')} tables, "
+            f"{data.get('users', 0)} users")
 
 
 TESTS = [
