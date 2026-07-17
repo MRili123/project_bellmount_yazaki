@@ -53,3 +53,6 @@ bellmounth.db
 
 # Runtime cache (regenerated from the API each run)
 admin_cache.json
+
+# Markdown docs (kept locally, not tracked in the repo)
+*.md
