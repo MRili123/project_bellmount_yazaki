@@ -44,8 +44,6 @@ Desktop app (Windows)          API (FastAPI on Azure)          Azure resources
   measurements, captures, notifications, and model registry.
 - **Azure Blob Storage** — stores captured images and (optionally) model files.
 
-See `AZURE_SETUP.md` for the exact resources and how they were provisioned.
-
 ---
 
 ## Roles
@@ -165,14 +163,3 @@ be added to the Azure SQL firewall — the app works from any network.
 - **Training** the CNN (`train_model.py`) is memory-heavy. Minimum 8 GB RAM
   (16 GB recommended); a CUDA GPU with 6–8 GB VRAM makes it far faster but is
   optional — TensorFlow falls back to CPU.
-
----
-
-## Documentation
-
-- `AZURE_SETUP.md` — Azure resources and provisioning steps
-- `api/DEPLOY_AZURE.md` — deploying the API to App Service
-- `SETUP.md` / `QUICKSTART.md` — setup notes
-- `GOOGLE_DRIVE_SETUP.md` — optional Google Drive model delivery
-
-(These docs are kept locally; they are git-ignored except this README.)
