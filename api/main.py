@@ -118,29 +118,51 @@ app.include_router(admin.router)
 
 
 @app.get("/health/db")
-def health_db(db: Session = Depends(get_db)):
+def health_db():
     """Public health check for the database and schema, verified server-side.
 
     The desktop app calls this instead of connecting to Azure SQL directly, so
     it works from any PC/network without SQL firewall changes. Reports whether
     every expected table exists and how many users/tables are present.
+
+    The serverless Azure SQL database auto-pauses when idle and takes ~30-60s to
+    resume, refusing connections while it does. This waits for it to wake up
+    instead of returning a 500 on the first cold hit.
     """
+    import time
     from sqlalchemy import inspect
-    from database import Base, engine
+    from database import Base, engine, SessionLocal
 
     expected = set(Base.metadata.tables.keys())
-    inspector = inspect(engine)
-    existing = set(inspector.get_table_names())
-    missing = sorted(expected - existing)
-
-    users = db.query(User).count() if not missing else 0
-    return {
-        "ok": len(missing) == 0,
-        "tables_expected": len(expected),
-        "tables_present": len(existing & expected),
-        "missing_tables": missing,
-        "users": users,
-    }
+    last_err = None
+    for attempt in range(10):
+        try:
+            inspector = inspect(engine)
+            existing = set(inspector.get_table_names())
+            missing = sorted(expected - existing)
+            users = 0
+            if not missing:
+                db = SessionLocal()
+                try:
+                    users = db.query(User).count()
+                finally:
+                    db.close()
+            return {
+                "ok": len(missing) == 0,
+                "tables_expected": len(expected),
+                "tables_present": len(existing & expected),
+                "missing_tables": missing,
+                "users": users,
+            }
+        except Exception as e:  # noqa: BLE001 - retry only DB-resume errors
+            msg = str(e)
+            if ("40613" in msg or "not currently available" in msg
+                    or "severity 20" in msg or "timeout" in msg.lower()):
+                last_err = e
+                time.sleep(8)
+                continue
+            raise
+    return {"ok": False, "error": f"database not reachable: {last_err}"}
 
 # Notifications endpoint
 @app.get("/notifications/")
