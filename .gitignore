@@ -56,3 +56,5 @@ admin_cache.json
 
 # Markdown docs (kept locally, not tracked in the repo)
 *.md
+# ...except the main README, which is the repo's front page
+!README.md
